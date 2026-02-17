@@ -1,0 +1,60 @@
+{
+  "name": "untangle-ai",
+  "version": "0.1.0",
+  "description": "Unified AI API Gateway - proxy requests to multiple AI providers through OpenAI-compatible endpoints",
+  "type": "module",
+  "bin": {
+    "untangle-ai": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "ui-dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rimraf dist",
+    "start": "node ./dist/index.js start",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "handlebars": "^4.7.8",
+    "hono": "^4.6.0",
+    "@hono/node-server": "^1.13.0",
+    "yaml": "^2.6.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@untangle-ai/core": "workspace:*",
+    "@untangle-ai/server": "workspace:*",
+    "rimraf": "^6.0.0",
+    "tsup": "^8.5.1"
+  },
+  "keywords": [
+    "ai",
+    "api",
+    "gateway",
+    "proxy",
+    "openai",
+    "anthropic",
+    "claude",
+    "gemini",
+    "groq",
+    "llm",
+    "chatgpt"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/untangle-ai"
+  },
+  "homepage": "https://github.com/your-username/untangle-ai#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

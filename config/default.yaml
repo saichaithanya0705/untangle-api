@@ -1,0 +1,21 @@
+# untangle-ai configuration example
+# Copy this to ./untangle.yaml and customize
+
+server:
+  port: 3000
+  host: localhost
+
+providers:
+  openai:
+    enabled: true
+    # API key can be set here or via OPENAI_API_KEY env var
+    # apiKey: sk-...
+
+    # Optionally customize which models are enabled
+    # models:
+    #   - id: gpt-4o
+    #     enabled: true
+    #   - id: gpt-4o-mini
+    #     enabled: true
+    #   - id: gpt-3.5-turbo
+    #     enabled: false
