@@ -22,7 +22,7 @@ export class TemplateEngine {
   private compiledTemplates = new Map<string, HandlebarsTemplateDelegate>();
 
   compile(templateId: string, template: string): void {
-    this.compiledTemplates.set(templateId, Handlebars.compile(template));
+    this.compiledTemplates.set(templateId, Handlebars.compile(template, { noEscape: true }));
   }
 
   hasTemplate(templateId: string): boolean {

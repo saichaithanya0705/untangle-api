@@ -34,6 +34,7 @@ export interface ProviderAdapter {
   getModelConfig(modelId: string): ModelConfig | undefined;
   getEndpointUrl(endpoint: 'chat' | 'models'): string;
   getAuthHeaders(apiKey: string): Record<string, string>;
+  buildAuthenticatedUrl(endpoint: 'chat' | 'models', apiKey: string): string;
 }
 
 export interface ProviderRegistry {
@@ -41,5 +42,6 @@ export interface ProviderRegistry {
   get(providerId: string): ProviderAdapter | undefined;
   getForModel(modelId: string): ProviderAdapter | undefined;
   list(): ProviderConfig[];
+  listAll(): ProviderConfig[];
   listModels(): Array<{ model: ModelConfig; provider: ProviderConfig }>;
 }

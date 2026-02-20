@@ -73,9 +73,11 @@ export class ProviderRegistry implements IProviderRegistry {
   }
 
   list(): ProviderConfig[] {
-    return Array.from(this.adapters.values())
-      .filter(a => a.config.enabled)
-      .map(a => a.config);
+    return this.listAll().filter(provider => provider.enabled);
+  }
+
+  listAll(): ProviderConfig[] {
+    return Array.from(this.adapters.values()).map(a => a.config);
   }
 
   listModels(): Array<{ model: ModelConfig; provider: ProviderConfig }> {

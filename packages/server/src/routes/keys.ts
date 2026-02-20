@@ -15,24 +15,24 @@ interface ProviderKeyStatus {
   envVar: string;
 }
 
-const PROVIDER_INFO: Record<string, { name: string; envVar: string }> = {
-  openai: { name: 'OpenAI', envVar: 'OPENAI_API_KEY' },
-  anthropic: { name: 'Anthropic', envVar: 'ANTHROPIC_API_KEY' },
-  google: { name: 'Google AI', envVar: 'GOOGLE_API_KEY' },
-  groq: { name: 'Groq', envVar: 'GROQ_API_KEY' },
-};
+function toEnvVar(providerId: string): string {
+  return `${providerId.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase()}_API_KEY`;
+}
 
 export function createKeysRoutes(ctx: KeysContext) {
   const app = new Hono();
 
+  const resolveProvider = (providerId: string) =>
+    ctx.registry.listAll().find(provider => provider.id === providerId);
+
   // List all providers with key status
   app.get('/api/keys', async (c) => {
     const providers: ProviderKeyStatus[] = await Promise.all(
-      Object.entries(PROVIDER_INFO).map(async ([id, info]) => ({
-        id,
-        name: info.name,
-        hasKey: !!(await ctx.getApiKey(id)),
-        envVar: info.envVar,
+      ctx.registry.listAll().map(async (provider) => ({
+        id: provider.id,
+        name: provider.name,
+        hasKey: !!(await ctx.getApiKey(provider.id)),
+        envVar: toEnvVar(provider.id),
       }))
     );
 
@@ -42,9 +42,9 @@ export function createKeysRoutes(ctx: KeysContext) {
   // Get single provider key status
   app.get('/api/keys/:provider', async (c) => {
     const providerId = c.req.param('provider');
-    const info = PROVIDER_INFO[providerId];
+    const provider = resolveProvider(providerId);
 
-    if (!info) {
+    if (!provider) {
       return c.json(
         { error: { message: `Unknown provider: ${providerId}` } },
         404
@@ -53,18 +53,18 @@ export function createKeysRoutes(ctx: KeysContext) {
 
     return c.json({
       id: providerId,
-      name: info.name,
+      name: provider.name,
       hasKey: !!(await ctx.getApiKey(providerId)),
-      envVar: info.envVar,
+      envVar: toEnvVar(providerId),
     });
   });
 
   // Add/update provider key
   app.post('/api/keys/:provider', async (c) => {
     const providerId = c.req.param('provider');
-    const info = PROVIDER_INFO[providerId];
+    const provider = resolveProvider(providerId);
 
-    if (!info) {
+    if (!provider) {
       return c.json(
         { error: { message: `Unknown provider: ${providerId}` } },
         404
@@ -93,19 +93,20 @@ export function createKeysRoutes(ctx: KeysContext) {
     }
 
     await ctx.setApiKey(providerId, body.apiKey);
+    (ctx.registry as any).setProviderEnabled(providerId, true);
 
     return c.json({
       success: true,
-      message: `API key for ${info.name} has been set`,
+      message: `API key for ${provider.name} has been set`,
     });
   });
 
   // Remove provider key
   app.delete('/api/keys/:provider', async (c) => {
     const providerId = c.req.param('provider');
-    const info = PROVIDER_INFO[providerId];
+    const provider = resolveProvider(providerId);
 
-    if (!info) {
+    if (!provider) {
       return c.json(
         { error: { message: `Unknown provider: ${providerId}` } },
         404
@@ -125,19 +126,20 @@ export function createKeysRoutes(ctx: KeysContext) {
     }
 
     await ctx.removeApiKey(providerId);
+    (ctx.registry as any).setProviderEnabled(providerId, false);
 
     return c.json({
       success: true,
-      message: `API key for ${info.name} has been removed`,
+      message: `API key for ${provider.name} has been removed`,
     });
   });
 
   // Test provider key
   app.post('/api/keys/:provider/test', async (c) => {
     const providerId = c.req.param('provider');
-    const info = PROVIDER_INFO[providerId];
+    const provider = resolveProvider(providerId);
 
-    if (!info) {
+    if (!provider) {
       return c.json(
         { error: { message: `Unknown provider: ${providerId}` } },
         404
@@ -148,27 +150,18 @@ export function createKeysRoutes(ctx: KeysContext) {
 
     if (!apiKey) {
       return c.json(
-        { error: { message: `No API key configured for ${info.name}` } },
+        { error: { message: `No API key configured for ${provider.name}` } },
         400
       );
     }
 
     try {
-      const provider = ctx.registry.get(providerId);
-
-      if (!provider) {
-        return c.json(
-          { error: { message: `Provider ${providerId} not registered` } },
-          404
-        );
-      }
-
       // Test by listing models (lightweight operation)
-      const models = provider.config.models;
+      const models = provider.models;
 
       return c.json({
         success: true,
-        message: `API key for ${info.name} is valid`,
+        message: `API key for ${provider.name} is valid`,
         modelCount: models.length,
       });
     } catch (error) {

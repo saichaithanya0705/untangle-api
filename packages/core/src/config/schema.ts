@@ -23,6 +23,7 @@ export const CustomProviderSchema = z.object({
     scheme: z.string().optional(),
     queryParam: z.string().optional(),
   }),
+  headers: z.record(z.string(), z.string()).optional(),
   models: z.array(z.object({
     id: z.string(),
     alias: z.string().optional(),

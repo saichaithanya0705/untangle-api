@@ -37,7 +37,7 @@ export function createChatRoutes(ctx: ChatContext) {
       }
 
       const providerRequest = adapter.transformRequest(body);
-      const endpointUrl = adapter.getEndpointUrl('chat');
+      const endpointUrl = adapter.buildAuthenticatedUrl('chat', apiKey);
       const headers = {
         'Content-Type': 'application/json',
         ...adapter.getAuthHeaders(apiKey),

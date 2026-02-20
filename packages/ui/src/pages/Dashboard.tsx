@@ -156,7 +156,7 @@ export default function Dashboard() {
           <CardContent>
             <div className="space-y-3">
               {Object.entries(modelsByProvider).map(([id, { name, count, enabled }]) => {
-                const keyInfo = keys.find((k) => k.providerId === id);
+                const keyInfo = keys.find((k) => k.id === id);
                 return (
                   <div key={id} className="flex items-center justify-between py-2 border-b last:border-0">
                     <div className="flex items-center gap-3">

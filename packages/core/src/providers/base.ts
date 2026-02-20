@@ -62,4 +62,8 @@ export abstract class BaseProviderAdapter implements ProviderAdapter {
       : apiKey;
     return { [this.config.authHeader]: value };
   }
+
+  buildAuthenticatedUrl(endpoint: 'chat' | 'models', _apiKey: string): string {
+    return this.getEndpointUrl(endpoint);
+  }
 }
