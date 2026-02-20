@@ -7,12 +7,13 @@ interface ModelsContext {
 
 export function createModelsRoutes(ctx: ModelsContext) {
   const app = new Hono();
+  const now = () => Math.floor(Date.now() / 1000);
 
   app.get('/v1/models', (c) => {
     const models = ctx.registry.listModels().map(({ model, provider }): OpenAIModelInfo => ({
       id: model.alias || model.id,
       object: 'model',
-      created: Date.now(),
+      created: now(),
       owned_by: provider.id,
     }));
 
@@ -34,7 +35,7 @@ export function createModelsRoutes(ctx: ModelsContext) {
     return c.json({
       id: found.model.alias || found.model.id,
       object: 'model',
-      created: Date.now(),
+      created: now(),
       owned_by: found.provider.id,
     });
   });

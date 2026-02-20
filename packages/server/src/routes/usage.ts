@@ -35,7 +35,8 @@ export function createUsageRoutes() {
 
   // Get recent usage records
   app.get('/api/usage/records', (c) => {
-    const limit = parseInt(c.req.query('limit') || '100', 10);
+    const rawLimit = parseInt(c.req.query('limit') || '100', 10);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 1000) : 100;
     const providerId = c.req.query('provider');
     const modelId = c.req.query('model');
 
@@ -69,19 +70,40 @@ export function createUsageRoutes() {
 
   // Refresh pricing from providers
   app.post('/api/pricing/refresh', async (c) => {
-    await pricingFetcher.refreshAllPricing();
-    const pricing = pricingFetcher.getAllPricing();
-    return c.json({ message: 'Pricing refreshed', pricing });
+    try {
+      await pricingFetcher.refreshAllPricing();
+      const pricing = pricingFetcher.getAllPricing();
+      return c.json({ message: 'Pricing refreshed', pricing });
+    } catch (error) {
+      return c.json(
+        { error: error instanceof Error ? error.message : 'Failed to refresh pricing' },
+        500
+      );
+    }
   });
 
   // Calculate cost estimate
   app.post('/api/pricing/calculate', async (c) => {
-    const body = await c.req.json<{
+    const body = await c.req.json().catch(() => null) as {
       provider: string;
       model: string;
       inputTokens: number;
       outputTokens: number;
-    }>();
+    } | null;
+    if (
+      !body ||
+      typeof body.provider !== 'string' ||
+      typeof body.model !== 'string' ||
+      typeof body.inputTokens !== 'number' ||
+      typeof body.outputTokens !== 'number' ||
+      body.inputTokens < 0 ||
+      body.outputTokens < 0
+    ) {
+      return c.json(
+        { error: 'Expected { provider: string, model: string, inputTokens: number, outputTokens: number }' },
+        400
+      );
+    }
 
     const cost = pricingFetcher.calculateCost(
       body.provider,

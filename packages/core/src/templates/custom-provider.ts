@@ -51,11 +51,21 @@ export class CustomProviderAdapter extends BaseProviderAdapter {
     };
   }
 
-  getEndpointUrl(endpoint: 'chat' | 'models'): string {
+  getEndpointUrl(
+    endpoint: 'chat' | 'models',
+    options?: { request?: OpenAIRequest; apiKey?: string }
+  ): string {
+    const withQueryAuth = (url: string): string => {
+      if (this.definition.auth.type !== 'query' || !options?.apiKey) return url;
+      const queryParam = this.definition.auth.queryParam ?? 'api_key';
+      const separator = url.includes('?') ? '&' : '?';
+      return `${url}${separator}${encodeURIComponent(queryParam)}=${encodeURIComponent(options.apiKey)}`;
+    };
+
     if (endpoint === 'chat') {
-      return `${this.config.baseUrl}${this.definition.endpoints.chat.path}`;
+      return withQueryAuth(`${this.config.baseUrl}${this.definition.endpoints.chat.path}`);
     }
-    return this.config.baseUrl;
+    return withQueryAuth(this.config.baseUrl);
   }
 
   buildAuthenticatedUrl(endpoint: 'chat' | 'models', apiKey: string): string {

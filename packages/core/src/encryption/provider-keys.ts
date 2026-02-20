@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { KeyStore, type EncryptedData } from './keystore.js';
 
 interface StoredKeys {
@@ -24,9 +24,9 @@ export class ProviderKeyManager {
   }
 
   private ensureDirectory(): void {
-    const dir = join(homedir(), '.untangle-ai');
+    const dir = dirname(this.storagePath);
     if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
   }
 
@@ -50,7 +50,10 @@ export class ProviderKeyManager {
 
   private save(): void {
     this.ensureDirectory();
-    writeFileSync(this.storagePath, JSON.stringify(this.data, null, 2), 'utf-8');
+    writeFileSync(this.storagePath, JSON.stringify(this.data, null, 2), {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
   }
 
   async addKey(providerId: string, apiKey: string): Promise<void> {

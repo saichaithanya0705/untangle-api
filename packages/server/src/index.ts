@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { cors } from 'hono/cors';
 import { readFileSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import type { ProviderRegistry, Config } from '@untangle-ai/core';
 import { createChatRoutes } from './routes/chat.js';
@@ -69,10 +69,16 @@ export function createApp(options: ServerOptions) {
     if (uiPath) {
       // Serve static files
       app.get('/assets/*', async (c) => {
-        const filePath = join(uiPath, c.req.path);
+        const assetsRoot = resolve(uiPath, 'assets');
+        const relativePath = c.req.path.replace(/^\/assets\//, '');
+        const filePath = resolve(assetsRoot, relativePath);
+        if (!filePath.startsWith(assetsRoot)) {
+          return c.notFound();
+        }
+
         if (existsSync(filePath)) {
           const content = readFileSync(filePath);
-          const ext = filePath.split('.').pop();
+          const ext = filePath.split('.').pop()?.toLowerCase();
           const types: Record<string, string> = {
             js: 'application/javascript',
             css: 'text/css',

@@ -24,29 +24,33 @@ export class ProviderRegistry implements IProviderRegistry {
   /**
    * Update models for a provider (for dynamic model discovery)
    */
-  updateModels(providerId: string, models: ModelConfig[]): void {
+  updateModels(providerId: string, models: ModelConfig[]): boolean {
     const adapter = this.adapters.get(providerId);
     if (adapter) {
       // Update the config's models array
       (adapter.config as { models: ModelConfig[] }).models = models;
+      return true;
     }
+    return false;
   }
 
   /**
    * Add models to an existing provider
    */
-  addModels(providerId: string, models: ModelConfig[]): void {
+  addModels(providerId: string, models: ModelConfig[]): boolean {
     const adapter = this.adapters.get(providerId);
-    if (adapter) {
-      const existing = adapter.config.models;
-      const existingIds = new Set(existing.map(m => m.id));
+    if (!adapter) return false;
 
-      for (const model of models) {
-        if (!existingIds.has(model.id)) {
-          existing.push(model);
-        }
+    const existing = adapter.config.models;
+    const existingIds = new Set(existing.map(m => m.id));
+
+    for (const model of models) {
+      if (!existingIds.has(model.id)) {
+        existing.push(model);
       }
     }
+
+    return true;
   }
 
   /**
@@ -73,7 +77,7 @@ export class ProviderRegistry implements IProviderRegistry {
   }
 
   list(): ProviderConfig[] {
-    return this.listAll().filter(provider => provider.enabled);
+    return this.listAll().filter(config => config.enabled);
   }
 
   listAll(): ProviderConfig[] {
@@ -94,17 +98,30 @@ export class ProviderRegistry implements IProviderRegistry {
   }
 }
 
-export const defaultRegistry = new ProviderRegistry();
+import { OpenAIAdapter } from './openai.js';
+import { AnthropicAdapter } from './anthropic.js';
+import { GoogleAdapter } from './google.js';
+import { GroqAdapter } from './groq.js';
+import { OpenRouterAdapter } from './openrouter.js';
+import { CustomProviderAdapter, type CustomProviderDefinition } from '../templates/custom-provider.js';
 
-import { openaiAdapter } from './openai.js';
-import { anthropicAdapter } from './anthropic.js';
-import { googleAdapter } from './google.js';
-import { groqAdapter } from './groq.js';
-import { openrouterAdapter } from './openrouter.js';
+export function registerDefaultProviders(registry: ProviderRegistry): ProviderRegistry {
+  registry.register(new OpenAIAdapter());
+  registry.register(new AnthropicAdapter());
+  registry.register(new GoogleAdapter());
+  registry.register(new GroqAdapter());
+  registry.register(new OpenRouterAdapter());
+  return registry;
+}
 
-// Register default providers
-defaultRegistry.register(openaiAdapter);
-defaultRegistry.register(anthropicAdapter);
-defaultRegistry.register(googleAdapter);
-defaultRegistry.register(groqAdapter);
-defaultRegistry.register(openrouterAdapter);
+export function createDefaultRegistry(
+  customProviders: CustomProviderDefinition[] = []
+): ProviderRegistry {
+  const registry = registerDefaultProviders(new ProviderRegistry());
+  for (const provider of customProviders) {
+    registry.register(new CustomProviderAdapter(provider));
+  }
+  return registry;
+}
+
+export const defaultRegistry = createDefaultRegistry();

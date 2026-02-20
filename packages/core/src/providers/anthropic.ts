@@ -148,18 +148,20 @@ export class AnthropicAdapter extends BaseProviderAdapter {
     };
   }
 
-  transformResponse(response: unknown): OpenAIResponse {
+  transformResponse(response: unknown, request?: OpenAIRequest): OpenAIResponse {
     const r = response as AnthropicResponse;
     const content = r.content
       .filter(c => c.type === 'text')
       .map(c => c.text)
       .join('');
 
+    const resolvedModel = this.getModelConfig(request?.model ?? '')?.id ?? request?.model ?? r.model;
+
     return {
       id: r.id,
       object: 'chat.completion',
-      created: Date.now(),
-      model: r.model,
+      created: this.unixTimestamp(),
+      model: resolvedModel,
       choices: [{
         index: 0,
         message: {
@@ -183,19 +185,20 @@ export class AnthropicAdapter extends BaseProviderAdapter {
     return 'stop';
   }
 
-  transformStreamChunk(chunk: string): OpenAIStreamChunk | null {
+  transformStreamChunk(chunk: string, request?: OpenAIRequest): OpenAIStreamChunk | null {
     if (chunk === '[DONE]') return null;
 
     try {
       const data = JSON.parse(chunk);
+      const model = this.getModelConfig(request?.model ?? '')?.id ?? request?.model ?? '';
 
       // Handle different Anthropic event types
       if (data.type === 'content_block_delta' && data.delta?.type === 'text_delta') {
         return {
           id: data.index?.toString() ?? 'chunk',
           object: 'chat.completion.chunk',
-          created: Date.now(),
-          model: '',
+          created: this.unixTimestamp(),
+          model,
           choices: [{
             index: 0,
             delta: { content: data.delta.text },
@@ -208,8 +211,8 @@ export class AnthropicAdapter extends BaseProviderAdapter {
         return {
           id: 'done',
           object: 'chat.completion.chunk',
-          created: Date.now(),
-          model: '',
+          created: this.unixTimestamp(),
+          model,
           choices: [{
             index: 0,
             delta: {},

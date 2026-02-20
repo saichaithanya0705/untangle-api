@@ -15,15 +15,21 @@ interface ProviderKeyStatus {
   envVar: string;
 }
 
+const ENV_VAR_OVERRIDES: Record<string, string> = {
+  openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  google: 'GOOGLE_API_KEY',
+  groq: 'GROQ_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+};
+
 function toEnvVar(providerId: string): string {
-  return `${providerId.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase()}_API_KEY`;
+  return ENV_VAR_OVERRIDES[providerId]
+    ?? `${providerId.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase()}_API_KEY`;
 }
 
 export function createKeysRoutes(ctx: KeysContext) {
   const app = new Hono();
-
-  const resolveProvider = (providerId: string) =>
-    ctx.registry.listAll().find(provider => provider.id === providerId);
 
   // List all providers with key status
   app.get('/api/keys', async (c) => {
@@ -42,7 +48,7 @@ export function createKeysRoutes(ctx: KeysContext) {
   // Get single provider key status
   app.get('/api/keys/:provider', async (c) => {
     const providerId = c.req.param('provider');
-    const provider = resolveProvider(providerId);
+    const provider = ctx.registry.get(providerId);
 
     if (!provider) {
       return c.json(
@@ -53,7 +59,7 @@ export function createKeysRoutes(ctx: KeysContext) {
 
     return c.json({
       id: providerId,
-      name: provider.name,
+      name: provider.config.name,
       hasKey: !!(await ctx.getApiKey(providerId)),
       envVar: toEnvVar(providerId),
     });
@@ -62,7 +68,7 @@ export function createKeysRoutes(ctx: KeysContext) {
   // Add/update provider key
   app.post('/api/keys/:provider', async (c) => {
     const providerId = c.req.param('provider');
-    const provider = resolveProvider(providerId);
+    const provider = ctx.registry.get(providerId);
 
     if (!provider) {
       return c.json(
@@ -83,9 +89,9 @@ export function createKeysRoutes(ctx: KeysContext) {
       );
     }
 
-    const body = await c.req.json<{ apiKey: string }>();
+    const body = await c.req.json().catch(() => null) as { apiKey?: string } | null;
 
-    if (!body.apiKey || typeof body.apiKey !== 'string') {
+    if (!body || !body.apiKey || typeof body.apiKey !== 'string') {
       return c.json(
         { error: { message: 'apiKey is required and must be a string' } },
         400
@@ -93,18 +99,18 @@ export function createKeysRoutes(ctx: KeysContext) {
     }
 
     await ctx.setApiKey(providerId, body.apiKey);
-    (ctx.registry as any).setProviderEnabled(providerId, true);
+    ctx.registry.setProviderEnabled(providerId, true);
 
     return c.json({
       success: true,
-      message: `API key for ${provider.name} has been set`,
+      message: `API key for ${provider.config.name} has been set`,
     });
   });
 
   // Remove provider key
   app.delete('/api/keys/:provider', async (c) => {
     const providerId = c.req.param('provider');
-    const provider = resolveProvider(providerId);
+    const provider = ctx.registry.get(providerId);
 
     if (!provider) {
       return c.json(
@@ -126,18 +132,18 @@ export function createKeysRoutes(ctx: KeysContext) {
     }
 
     await ctx.removeApiKey(providerId);
-    (ctx.registry as any).setProviderEnabled(providerId, false);
+    ctx.registry.setProviderEnabled(providerId, false);
 
     return c.json({
       success: true,
-      message: `API key for ${provider.name} has been removed`,
+      message: `API key for ${provider.config.name} has been removed`,
     });
   });
 
   // Test provider key
   app.post('/api/keys/:provider/test', async (c) => {
     const providerId = c.req.param('provider');
-    const provider = resolveProvider(providerId);
+    const provider = ctx.registry.get(providerId);
 
     if (!provider) {
       return c.json(
@@ -150,19 +156,51 @@ export function createKeysRoutes(ctx: KeysContext) {
 
     if (!apiKey) {
       return c.json(
-        { error: { message: `No API key configured for ${provider.name}` } },
+        { error: { message: `No API key configured for ${provider.config.name}` } },
         400
       );
     }
 
     try {
-      // Test by listing models (lightweight operation)
-      const models = provider.models;
+      const endpoint = provider.getEndpointUrl('models', { apiKey });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const response = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          ...provider.getAuthHeaders(apiKey),
+        },
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timeout));
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => response.statusText);
+        return c.json(
+          {
+            success: false,
+            error: {
+              message: `Upstream test failed (${response.status}): ${text || response.statusText}`,
+            },
+          },
+          400
+        );
+      }
+
+      const payload = await response.json().catch(() => ({})) as {
+        data?: unknown[];
+        models?: unknown[];
+      };
+      const modelCount = Array.isArray(payload.data)
+        ? payload.data.length
+        : Array.isArray(payload.models)
+          ? payload.models.length
+          : provider.config.models.length;
 
       return c.json({
         success: true,
-        message: `API key for ${provider.name} is valid`,
-        modelCount: models.length,
+        message: `API key for ${provider.config.name} is valid`,
+        modelCount,
       });
     } catch (error) {
       const message =

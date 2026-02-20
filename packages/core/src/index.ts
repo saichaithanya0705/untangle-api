@@ -22,7 +22,7 @@ export type {
 
 // Classes
 export { BaseProviderAdapter } from './providers/base.js';
-export { ProviderRegistry, defaultRegistry } from './providers/registry.js';
+export { ProviderRegistry, defaultRegistry, registerDefaultProviders, createDefaultRegistry } from './providers/registry.js';
 export { OpenAIAdapter, openaiAdapter } from './providers/openai.js';
 export { AnthropicAdapter, anthropicAdapter } from './providers/anthropic.js';
 export { GoogleAdapter, googleAdapter } from './providers/google.js';
@@ -64,4 +64,3 @@ export {
   type DiscoveredModel,
   type ModelDiscoveryResult,
 } from './discovery/index.js';
-

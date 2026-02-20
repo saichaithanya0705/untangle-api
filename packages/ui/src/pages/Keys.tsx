@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Key, CheckCircle, XCircle, AlertCircle, Plus, Trash2, TestTube, Loader2, X, RefreshCw } from 'lucide-react';
+import { Key, CheckCircle, XCircle, AlertCircle, Plus, Trash2, TestTube, Loader2, X } from 'lucide-react';
 import { api } from '@/lib/api';
 
 interface ProviderKey {
@@ -24,10 +24,8 @@ export default function Keys() {
 
   const fetchKeys = async () => {
     try {
-      const res = await fetch('/api/keys');
-      if (!res.ok) throw new Error('Failed to fetch keys');
-      const data = await res.json();
-      setProviders(data.providers);
+      const providers = await api.getKeys();
+      setProviders(providers);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load keys');
@@ -45,16 +43,7 @@ export default function Keys() {
 
     setSaving(true);
     try {
-      const res = await fetch(`/api/keys/${selectedProvider}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: apiKeyInput }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error?.message || 'Failed to save key');
-      }
+      await api.setKey(selectedProvider, apiKeyInput);
 
       // Automatically discover models for this provider
       setDiscovering(selectedProvider);
@@ -99,14 +88,7 @@ export default function Keys() {
 
   const handleRemoveKey = async (providerId: string) => {
     try {
-      const res = await fetch(`/api/keys/${providerId}`, {
-        method: 'DELETE',
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error?.message || 'Failed to remove key');
-      }
+      await api.removeKey(providerId);
 
       setConfirmDelete(null);
       await fetchKeys();
@@ -120,16 +102,14 @@ export default function Keys() {
     setTestResult(null);
 
     try {
-      const res = await fetch(`/api/keys/${providerId}/test`, {
-        method: 'POST',
-      });
-
-      const data = await res.json();
+      const data = await api.testKey(providerId);
 
       setTestResult({
         provider: providerId,
-        success: data.success,
-        message: data.success ? data.message : data.error?.message || 'Test failed',
+        success: !!data.success,
+        message: data.success
+          ? (data.message ?? 'API key is valid')
+          : (data.error?.message ?? 'Test failed'),
       });
     } catch (err) {
       setTestResult({
@@ -184,7 +164,7 @@ export default function Keys() {
             <h3 className="font-medium text-yellow-800">API Key Management</h3>
             <p className="text-sm text-yellow-700 mt-1">
               Keys can be configured via environment variables or added here for runtime use.
-              Runtime keys are stored in memory and will be lost when the server restarts.
+              Keys added here are encrypted and stored locally on this machine.
             </p>
           </div>
         </div>

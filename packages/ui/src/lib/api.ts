@@ -67,6 +67,14 @@ export interface DiscoveryResult {
   source: string;
 }
 
+interface ProvidersResponse {
+  providers: Provider[];
+}
+
+interface KeysResponse {
+  providers: ProviderKey[];
+}
+
 export const api = {
   // Models
   async getModels(): Promise<Model[]> {
@@ -84,10 +92,10 @@ export const api = {
   },
 
   async toggleModel(providerId: string, modelId: string, enabled: boolean): Promise<void> {
-    const res = await fetch(`${BASE_URL}/api/models/${providerId}/${modelId}/toggle`, {
+    const res = await fetch(`${BASE_URL}/api/models/${providerId}/toggle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled }),
+      body: JSON.stringify({ modelId, enabled }),
     });
     if (!res.ok) throw new Error('Failed to toggle model');
   },
@@ -99,7 +107,7 @@ export const api = {
     return res.json();
   },
 
-  async discoverAllModels(): Promise<Record<string, DiscoveredModel[]>> {
+  async discoverAllModels(): Promise<Record<string, { models: DiscoveredModel[]; source: string }>> {
     const res = await fetch(`${BASE_URL}/api/discover/all`);
     if (!res.ok) throw new Error('Failed to discover all models');
     const data = await res.json();
@@ -132,11 +140,21 @@ export const api = {
   async getProviders(): Promise<Provider[]> {
     const res = await fetch(`${BASE_URL}/api/providers`);
     if (!res.ok) throw new Error('Failed to fetch providers');
-    const data = await res.json();
-    return (data.providers || []).map((p: any) => ({
+    const data = await res.json() as ProvidersResponse;
+    return (data.providers || []).map((p) => ({
       ...p,
-      hasKey: true, // All providers from this endpoint have keys
-      configured: true,
+      hasKey: p.configured,
+    }));
+  },
+
+  // Get all providers including unconfigured ones
+  async getAllProviders(): Promise<Provider[]> {
+    const res = await fetch(`${BASE_URL}/api/providers/all`);
+    if (!res.ok) throw new Error('Failed to fetch all providers');
+    const data = await res.json() as ProvidersResponse;
+    return (data.providers || []).map((p) => ({
+      ...p,
+      hasKey: p.configured,
     }));
   },
 
@@ -147,17 +165,6 @@ export const api = {
       body: JSON.stringify({ enabled }),
     });
     if (!res.ok) throw new Error('Failed to toggle provider');
-  },
-
-  // Get all providers including unconfigured ones
-  async getAllProviders(): Promise<Provider[]> {
-    const res = await fetch(`${BASE_URL}/api/providers/all`);
-    if (!res.ok) throw new Error('Failed to fetch all providers');
-    const data = await res.json();
-    return (data.providers || []).map((p: any) => ({
-      ...p,
-      hasKey: p.configured,
-    }));
   },
 
   // Refresh models for a provider (triggers web search if no API)
@@ -173,7 +180,7 @@ export const api = {
   async getKeys(): Promise<ProviderKey[]> {
     const res = await fetch(`${BASE_URL}/api/keys`);
     if (!res.ok) throw new Error('Failed to fetch keys');
-    const data = await res.json();
+    const data = await res.json() as KeysResponse;
     return data.providers || [];
   },
 
@@ -193,6 +200,13 @@ export const api = {
     if (!res.ok) throw new Error('Failed to remove key');
   },
 
+  async testKey(providerId: string): Promise<{ success: boolean; message?: string; error?: { message?: string } }> {
+    const res = await fetch(`${BASE_URL}/api/keys/${providerId}/test`, {
+      method: 'POST',
+    });
+    return res.json();
+  },
+
   // Health
   async getHealth(): Promise<ServerHealth> {
     try {
@@ -207,13 +221,13 @@ export const api = {
   },
 
   // Pricing
-  async getPricing(): Promise<{ prices: Array<{ modelId: string; providerId: string; inputPricePer1M: number; outputPricePer1M: number }> }> {
+  async getPricing(): Promise<{ pricing: Array<{ modelId: string; providerId: string; inputPricePer1M: number; outputPricePer1M: number }> }> {
     const res = await fetch(`${BASE_URL}/api/pricing`);
     if (!res.ok) throw new Error('Failed to fetch pricing');
     return res.json();
   },
 
-  async refreshPricing(): Promise<{ size: number }> {
+  async refreshPricing(): Promise<{ message: string; pricing: Array<{ modelId: string; providerId: string; inputPricePer1M: number; outputPricePer1M: number }> }> {
     const res = await fetch(`${BASE_URL}/api/pricing/refresh`, { method: 'POST' });
     if (!res.ok) throw new Error('Failed to refresh pricing');
     return res.json();

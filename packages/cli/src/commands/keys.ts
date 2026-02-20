@@ -1,9 +1,10 @@
 import { Command } from 'commander';
 import { createInterface } from 'readline';
-import { KeyStore, ProviderKeyManager, defaultRegistry } from '@untangle-ai/core';
+import { KeyStore, ProviderKeyManager, createDefaultRegistry } from '@untangle-ai/core';
 import { logger } from '../utils/logger.js';
+import { resolveMasterPassword } from '../utils/master-password.js';
 
-const MASTER_PASSWORD = process.env.UNTANGLE_MASTER_PASSWORD || 'untangle-ai-default';
+const registry = createDefaultRegistry();
 
 async function prompt(question: string, hidden = false): Promise<string> {
   const rl = createInterface({
@@ -12,27 +13,33 @@ async function prompt(question: string, hidden = false): Promise<string> {
   });
 
   return new Promise((resolve) => {
-    if (hidden) {
+    if (hidden && process.stdin.isTTY && process.stdout.isTTY) {
       process.stdout.write(question);
       let input = '';
-      process.stdin.setRawMode?.(true);
-      process.stdin.resume();
-      process.stdin.on('data', (char) => {
+      const onData = (char: Buffer) => {
         const c = char.toString();
         if (c === '\n' || c === '\r') {
           process.stdin.setRawMode?.(false);
           process.stdout.write('\n');
+          process.stdin.off('data', onData);
           rl.close();
           resolve(input);
         } else if (c === '\u0003') {
-          process.exit();
+          process.stdin.setRawMode?.(false);
+          process.stdin.off('data', onData);
+          rl.close();
+          process.exit(1);
         } else if (c === '\u007F') {
           input = input.slice(0, -1);
         } else {
           input += c;
           process.stdout.write('*');
         }
-      });
+      };
+
+      process.stdin.setRawMode?.(true);
+      process.stdin.resume();
+      process.stdin.on('data', onData);
     } else {
       rl.question(question, (answer) => {
         rl.close();
@@ -44,7 +51,7 @@ async function prompt(question: string, hidden = false): Promise<string> {
 
 async function getKeyManager(): Promise<ProviderKeyManager> {
   const keyStore = new KeyStore();
-  await keyStore.initialize(MASTER_PASSWORD);
+  await keyStore.initialize(resolveMasterPassword());
   return new ProviderKeyManager(keyStore);
 }
 
@@ -53,9 +60,9 @@ const addCommand = new Command('add')
   .argument('<provider>', 'Provider ID (openai, anthropic, google, groq)')
   .action(async (providerId: string) => {
     // Validate provider exists
-    const provider = defaultRegistry.get(providerId);
+    const provider = registry.get(providerId);
     if (!provider) {
-      const available = defaultRegistry.list().map(p => p.id).join(', ');
+      const available = registry.listAll().map(p => p.id).join(', ');
       logger.error(`Unknown provider: ${providerId}`);
       logger.dim(`Available providers: ${available}`);
       process.exit(1);
@@ -85,7 +92,7 @@ const listCommand = new Command('list')
     try {
       const keyManager = await getKeyManager();
       const stored = keyManager.listProviders();
-      const providers = defaultRegistry.list();
+      const providers = registry.listAll();
 
       logger.info('API Key Status:\n');
 
@@ -131,7 +138,7 @@ const testCommand = new Command('test')
   .description('Test an API key by making a simple request')
   .argument('<provider>', 'Provider ID')
   .action(async (providerId: string) => {
-    const provider = defaultRegistry.get(providerId);
+    const provider = registry.get(providerId);
     if (!provider) {
       logger.error(`Unknown provider: ${providerId}`);
       process.exit(1);
@@ -149,13 +156,16 @@ const testCommand = new Command('test')
 
       logger.info(`Testing ${provider.config.name} API key...`);
 
-      const url = provider.getEndpointUrl('models');
+      const url = provider.getEndpointUrl('models', { apiKey });
       const headers = {
         ...provider.getAuthHeaders(apiKey),
-        'Content-Type': 'application/json',
+        Accept: 'application/json',
       };
 
-      const response = await fetch(url, { method: 'GET', headers });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const response = await fetch(url, { method: 'GET', headers, signal: controller.signal })
+        .finally(() => clearTimeout(timeout));
 
       if (response.ok) {
         logger.success(`API key for ${provider.config.name} is valid!`);

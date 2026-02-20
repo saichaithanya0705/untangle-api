@@ -74,11 +74,13 @@ export class GoogleAdapter extends BaseProviderAdapter {
     enabled: true,
   };
 
-  private currentModel: string = 'gemini-1.5-flash';
-
-  getEndpointUrl(endpoint: 'chat' | 'models'): string {
+  getEndpointUrl(
+    endpoint: 'chat' | 'models',
+    options?: { request?: OpenAIRequest; apiKey?: string }
+  ): string {
     if (endpoint === 'chat') {
-      return `${this.config.baseUrl}/models/${this.currentModel}:generateContent`;
+      const modelId = this.resolveModelId(options?.request);
+      return `${this.config.baseUrl}/models/${modelId}:generateContent`;
     }
     return `${this.config.baseUrl}/models`;
   }
@@ -90,10 +92,6 @@ export class GoogleAdapter extends BaseProviderAdapter {
   }
 
   transformRequest(request: OpenAIRequest): GoogleRequest {
-    // Store model for endpoint URL
-    const modelConfig = this.getModelConfig(request.model);
-    this.currentModel = modelConfig?.id ?? request.model;
-
     // Extract system message
     const systemMessages = request.messages.filter(m => m.role === 'system');
     const systemInstruction = systemMessages.length > 0
@@ -122,7 +120,7 @@ export class GoogleAdapter extends BaseProviderAdapter {
     };
   }
 
-  transformResponse(response: unknown): OpenAIResponse {
+  transformResponse(response: unknown, request?: OpenAIRequest): OpenAIResponse {
     const r = response as GoogleResponse;
     const candidate = r.candidates?.[0];
     const content = candidate?.content?.parts
@@ -130,10 +128,10 @@ export class GoogleAdapter extends BaseProviderAdapter {
       ?.join('') ?? '';
 
     return {
-      id: `google-${Date.now()}`,
+      id: `google-${this.unixTimestamp()}`,
       object: 'chat.completion',
-      created: Date.now(),
-      model: this.currentModel,
+      created: this.unixTimestamp(),
+      model: this.resolveModelId(request),
       choices: [{
         index: 0,
         message: {
@@ -157,19 +155,20 @@ export class GoogleAdapter extends BaseProviderAdapter {
     return 'stop';
   }
 
-  transformStreamChunk(chunk: string): OpenAIStreamChunk | null {
+  transformStreamChunk(chunk: string, request?: OpenAIRequest): OpenAIStreamChunk | null {
     // Google streaming format
     try {
       const data = JSON.parse(chunk);
       const candidate = data.candidates?.[0];
       const text = candidate?.content?.parts?.[0]?.text;
+      const model = this.resolveModelId(request);
 
       if (text) {
         return {
-          id: `google-${Date.now()}`,
+          id: `google-${this.unixTimestamp()}`,
           object: 'chat.completion.chunk',
-          created: Date.now(),
-          model: this.currentModel,
+          created: this.unixTimestamp(),
+          model,
           choices: [{
             index: 0,
             delta: { content: text },
@@ -180,10 +179,10 @@ export class GoogleAdapter extends BaseProviderAdapter {
 
       if (candidate?.finishReason) {
         return {
-          id: `google-${Date.now()}`,
+          id: `google-${this.unixTimestamp()}`,
           object: 'chat.completion.chunk',
-          created: Date.now(),
-          model: this.currentModel,
+          created: this.unixTimestamp(),
+          model,
           choices: [{
             index: 0,
             delta: {},
@@ -196,6 +195,11 @@ export class GoogleAdapter extends BaseProviderAdapter {
     } catch {
       return null;
     }
+  }
+
+  private resolveModelId(request?: OpenAIRequest): string {
+    const requested = request?.model ?? 'gemini-1.5-flash';
+    return this.getModelConfig(requested)?.id ?? requested;
   }
 
   normalizeError(error: unknown): OpenAIError {

@@ -81,6 +81,25 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
   });
 
   /**
+   * Fetch all models from OpenRouter (comprehensive pricing data)
+   */
+  app.post('/api/discover/openrouter/refresh', async (c) => {
+    try {
+      const models = await modelDiscovery.fetchFromOpenRouter();
+
+      return c.json({
+        count: models.length,
+        providers: [...new Set(models.map(m => m.id.split('/')[0]))].length,
+        lastUpdated: new Date().toISOString(),
+      });
+    } catch (error) {
+      return c.json({
+        error: error instanceof Error ? error.message : 'Failed to fetch from OpenRouter',
+      }, 500);
+    }
+  });
+
+  /**
    * Refresh models for a provider using web search
    * This is the endpoint for the UI's refresh button
    * Results are cached until the next refresh
@@ -90,29 +109,25 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
     const apiKey = await ctx.getApiKey(providerId);
 
     try {
-      let models: DiscoveredModel[];
-      let source: string;
+      let models: DiscoveredModel[] = [];
+      let source: string = 'web-search';
 
       // If we have an API key, try API first
       if (apiKey) {
-        try {
-          models = await modelDiscovery.discoverFromAPI(providerId, apiKey);
-          source = 'api';
-        } catch {
-          // Fall back to web search
-          models = await modelDiscovery.refreshFromWebSearch(providerId);
-          source = 'web-search';
-        }
-      } else {
-        // No API key, use web search
+        models = await modelDiscovery.discoverFromAPI(providerId, apiKey);
+        source = models.length > 0 ? 'api' : 'web-search';
+      }
+
+      if (models.length === 0) {
+        // No API key or no API results, use web search
         models = await modelDiscovery.refreshFromWebSearch(providerId);
-        source = 'web-search';
+        source = models[0]?.source ?? 'web-search';
       }
 
       if (models.length > 0) {
         // Update the registry with refreshed models
         const modelConfigs = models.map(m => modelDiscovery.toModelConfig(m, true));
-        (ctx.registry as any).updateModels(providerId, modelConfigs);
+        ctx.registry.updateModels(providerId, modelConfigs);
 
         // Cache the result
         modelDiscovery.setCached(providerId, models);
@@ -129,25 +144,6 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
       return c.json({
         error: error instanceof Error ? error.message : 'Refresh failed',
         models: [],
-      }, 500);
-    }
-  });
-
-  /**
-   * Fetch all models from OpenRouter (comprehensive pricing data)
-   */
-  app.post('/api/discover/openrouter/refresh', async (c) => {
-    try {
-      const models = await modelDiscovery.fetchFromOpenRouter();
-
-      return c.json({
-        count: models.length,
-        providers: [...new Set(models.map(m => m.id.split('/')[0]))].length,
-        lastUpdated: new Date().toISOString(),
-      });
-    } catch (error) {
-      return c.json({
-        error: error instanceof Error ? error.message : 'Failed to fetch from OpenRouter',
       }, 500);
     }
   });
@@ -208,10 +204,13 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
    */
   app.post('/api/models/:providerId/:modelId/toggle', async (c) => {
     const providerId = c.req.param('providerId');
-    const modelId = c.req.param('modelId');
-    const body = await c.req.json() as { enabled: boolean };
+    const modelId = decodeURIComponent(c.req.param('modelId'));
+    const body = await c.req.json().catch(() => null) as { enabled?: boolean } | null;
+    if (!body || typeof body.enabled !== 'boolean') {
+      return c.json({ error: 'enabled must be a boolean' }, 400);
+    }
 
-    const success = (ctx.registry as any).setModelEnabled(providerId, modelId, body.enabled);
+    const success = ctx.registry.setModelEnabled(providerId, modelId, body.enabled);
 
     if (!success) {
       return c.json({ error: 'Model or provider not found' }, 404);
@@ -225,18 +224,47 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
   });
 
   /**
+   * Enable/disable a model in the registry (supports model IDs containing `/`)
+   */
+  app.post('/api/models/:providerId/toggle', async (c) => {
+    const providerId = c.req.param('providerId');
+    const body = await c.req.json().catch(() => null) as { modelId?: string; enabled?: boolean } | null;
+    if (!body || typeof body.modelId !== 'string' || typeof body.enabled !== 'boolean') {
+      return c.json({ error: 'Expected { modelId: string, enabled: boolean }' }, 400);
+    }
+
+    const success = ctx.registry.setModelEnabled(providerId, body.modelId, body.enabled);
+
+    if (!success) {
+      return c.json({ error: 'Model or provider not found' }, 404);
+    }
+
+    return c.json({
+      providerId,
+      modelId: body.modelId,
+      enabled: body.enabled,
+    });
+  });
+
+  /**
    * Add discovered models to a provider
    */
   app.post('/api/models/:providerId/add', async (c) => {
     const providerId = c.req.param('providerId');
-    const body = await c.req.json() as { models: DiscoveredModel[] };
+    const body = await c.req.json().catch(() => null) as { models?: DiscoveredModel[] } | null;
+    if (!body || !Array.isArray(body.models)) {
+      return c.json({ error: 'models must be an array' }, 400);
+    }
 
     // Convert discovered models to ModelConfig
     const modelConfigs: ModelConfig[] = body.models.map(m =>
       modelDiscovery.toModelConfig(m, false)
     );
 
-    (ctx.registry as any).addModels(providerId, modelConfigs);
+    const added = ctx.registry.addModels(providerId, modelConfigs);
+    if (!added) {
+      return c.json({ error: 'Provider not found' }, 404);
+    }
 
     return c.json({
       providerId,
@@ -246,7 +274,6 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
 
   /**
    * Get full model list with all details (for UI)
-   * Only returns models from providers with API keys configured
    */
   app.get('/api/models/full', (c) => {
     const models = ctx.registry.listModels();
@@ -267,47 +294,30 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
     });
   });
 
-
   /**
-   * Enable/disable a provider in the registry
+   * Get list of active providers
    */
-  app.post('/api/providers/:providerId/toggle', async (c) => {
-    const providerId = c.req.param('providerId');
-    const body = await c.req.json() as { enabled: boolean };
-
-    const success = (ctx.registry as any).setProviderEnabled(providerId, body.enabled);
-
-    if (!success) {
-      return c.json({ error: 'Provider not found' }, 404);
-    }
-
-    return c.json({
-      providerId,
-      enabled: body.enabled,
-    });
-  });
-
-  /**
-   * Get list of configured providers (those with API keys)
-   * Only enabled providers are returned - providers without API keys are hidden
-   */
-  app.get('/api/providers', (c) => {
-    // registry.list() already filters to only enabled providers
+  app.get('/api/providers', async (c) => {
     const providers = ctx.registry.list();
-
-    return c.json({
-      providers: providers.map(provider => {
+    const providerDetails = await Promise.all(
+      providers.map(async (provider) => {
         const cached = modelDiscovery.getCached(provider.id);
+        const apiKey = await ctx.getApiKey(provider.id);
         return {
           id: provider.id,
           name: provider.name,
           enabled: provider.enabled,
+          configured: !!apiKey,
           modelCount: provider.models.filter(m => m.enabled).length,
           lastRefreshed: cached?.lastUpdated || null,
-          source: cached?.source || 'api',
+          source: cached?.source || (apiKey ? 'api' : 'none'),
         };
-      }),
-      count: providers.length,
+      })
+    );
+
+    return c.json({
+      providers: providerDetails,
+      count: providerDetails.length,
     });
   });
 
@@ -316,27 +326,45 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
    */
   app.get('/api/providers/all', async (c) => {
     const allProviders = ctx.registry.listAll();
-    const providers = [];
-
-    for (const provider of allProviders) {
-      const apiKey = await ctx.getApiKey(provider.id);
-      const cached = modelDiscovery.getCached(provider.id);
-      providers.push({
-        id: provider.id,
-        name: provider.name,
-        enabled: provider.enabled,
-        configured: !!apiKey,
-        modelCount: provider.models.filter(m => m.enabled).length,
-        lastRefreshed: cached?.lastUpdated || null,
-        source: cached?.source || (apiKey ? 'api' : 'none'),
-      });
-    }
+    const providers = await Promise.all(
+      allProviders.map(async (provider) => {
+        const apiKey = await ctx.getApiKey(provider.id);
+        const cached = modelDiscovery.getCached(provider.id);
+        return {
+          id: provider.id,
+          name: provider.name,
+          enabled: provider.enabled,
+          configured: !!apiKey,
+          modelCount: provider.models.filter(m => m.enabled).length,
+          lastRefreshed: cached?.lastUpdated || null,
+          source: cached?.source || (apiKey ? 'api' : 'none'),
+        };
+      })
+    );
 
     return c.json({
       providers,
       configured: providers.filter(p => p.configured).length,
       total: providers.length,
     });
+  });
+
+  /**
+   * Enable/disable provider
+   */
+  app.post('/api/providers/:providerId/toggle', async (c) => {
+    const providerId = c.req.param('providerId');
+    const body = await c.req.json().catch(() => null) as { enabled?: boolean } | null;
+    if (!body || typeof body.enabled !== 'boolean') {
+      return c.json({ error: 'enabled must be a boolean' }, 400);
+    }
+
+    const success = ctx.registry.setProviderEnabled(providerId, body.enabled);
+    if (!success) {
+      return c.json({ error: 'Provider not found' }, 404);
+    }
+
+    return c.json({ providerId, enabled: body.enabled });
   });
 
   return app;

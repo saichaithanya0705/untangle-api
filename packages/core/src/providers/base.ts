@@ -14,8 +14,8 @@ export abstract class BaseProviderAdapter implements ProviderAdapter {
   abstract readonly config: ProviderConfig;
 
   abstract transformRequest(request: OpenAIRequest): unknown;
-  abstract transformResponse(response: unknown): OpenAIResponse;
-  abstract transformStreamChunk(chunk: string): OpenAIStreamChunk | null;
+  abstract transformResponse(response: unknown, request?: OpenAIRequest): OpenAIResponse;
+  abstract transformStreamChunk(chunk: string, request?: OpenAIRequest): OpenAIStreamChunk | null;
 
   normalizeError(error: unknown): OpenAIError {
     if (error instanceof Error) {
@@ -48,7 +48,10 @@ export abstract class BaseProviderAdapter implements ProviderAdapter {
     );
   }
 
-  getEndpointUrl(endpoint: 'chat' | 'models'): string {
+  getEndpointUrl(
+    endpoint: 'chat' | 'models',
+    _options?: { request?: OpenAIRequest; apiKey?: string }
+  ): string {
     const paths: Record<string, string> = {
       chat: '/chat/completions',
       models: '/models',
@@ -63,7 +66,11 @@ export abstract class BaseProviderAdapter implements ProviderAdapter {
     return { [this.config.authHeader]: value };
   }
 
-  buildAuthenticatedUrl(endpoint: 'chat' | 'models', _apiKey: string): string {
-    return this.getEndpointUrl(endpoint);
+  buildAuthenticatedUrl(endpoint: 'chat' | 'models', apiKey: string): string {
+    return this.getEndpointUrl(endpoint, { apiKey });
+  }
+
+  protected unixTimestamp(): number {
+    return Math.floor(Date.now() / 1000);
   }
 }
