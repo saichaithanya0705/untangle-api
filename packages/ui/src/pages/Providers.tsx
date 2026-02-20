@@ -33,10 +33,21 @@ export default function Providers() {
     loadProviders();
   }, []);
 
-  const toggleProvider = (id: string) => {
+  const toggleProvider = async (id: string, enabled: boolean) => {
+    // optimistic update
     setProviders((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, enabled: !p.enabled } : p))
+      prev.map((p) => (p.id === id ? { ...p, enabled } : p))
     );
+
+    try {
+      await api.toggleProvider(id, enabled);
+    } catch (error) {
+      // rollback on failure
+      setProviders((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, enabled: !enabled } : p))
+      );
+      console.error('Failed to toggle provider:', error);
+    }
   };
 
   const refreshProvider = async (id: string) => {
@@ -139,7 +150,7 @@ export default function Providers() {
                   <TableCell>
                     <Switch
                       checked={provider.enabled}
-                      onCheckedChange={() => toggleProvider(provider.id)}
+                      onCheckedChange={(enabled) => toggleProvider(provider.id, enabled)}
                     />
                   </TableCell>
                   <TableCell className="text-right">

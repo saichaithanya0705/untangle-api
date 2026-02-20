@@ -49,10 +49,10 @@ export interface Provider {
 }
 
 export interface ProviderKey {
-  providerId: string;
-  providerName: string;
+  id: string;
+  name: string;
   hasKey: boolean;
-  keyHint?: string;
+  envVar: string;
 }
 
 export interface ServerHealth {
@@ -140,6 +140,15 @@ export const api = {
     }));
   },
 
+  async toggleProvider(providerId: string, enabled: boolean): Promise<void> {
+    const res = await fetch(`${BASE_URL}/api/providers/${providerId}/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!res.ok) throw new Error('Failed to toggle provider');
+  },
+
   // Get all providers including unconfigured ones
   async getAllProviders(): Promise<Provider[]> {
     const res = await fetch(`${BASE_URL}/api/providers/all`);
@@ -165,7 +174,7 @@ export const api = {
     const res = await fetch(`${BASE_URL}/api/keys`);
     if (!res.ok) throw new Error('Failed to fetch keys');
     const data = await res.json();
-    return data.keys || [];
+    return data.providers || [];
   },
 
   async setKey(providerId: string, apiKey: string): Promise<void> {

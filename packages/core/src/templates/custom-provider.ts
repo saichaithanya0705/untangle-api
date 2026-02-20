@@ -13,6 +13,7 @@ export interface CustomProviderDefinition {
     scheme?: string;
     queryParam?: string;
   };
+  headers?: Record<string, string>;
   models: ModelConfig[];
   endpoints: {
     chat: {
@@ -57,17 +58,35 @@ export class CustomProviderAdapter extends BaseProviderAdapter {
     return this.config.baseUrl;
   }
 
+  buildAuthenticatedUrl(endpoint: 'chat' | 'models', apiKey: string): string {
+    const baseUrl = this.getEndpointUrl(endpoint);
+    const { auth } = this.definition;
+
+    if (auth.type !== 'query') {
+      return baseUrl;
+    }
+
+    const queryParam = auth.queryParam ?? 'api_key';
+    const url = new URL(baseUrl);
+    url.searchParams.set(queryParam, apiKey);
+    return url.toString();
+  }
+
   getAuthHeaders(apiKey: string): Record<string, string> {
     const { auth } = this.definition;
+    const baseHeaders = this.definition.headers ?? {};
 
     if (auth.type === 'header') {
       const header = auth.header ?? 'Authorization';
       const value = auth.scheme ? `${auth.scheme} ${apiKey}` : apiKey;
-      return { [header]: value };
+      return {
+        ...baseHeaders,
+        [header]: value,
+      };
     }
 
-    // Query param auth handled differently
-    return {};
+    // Query param auth uses URL-based auth and only static headers.
+    return baseHeaders;
   }
 
   transformRequest(request: OpenAIRequest): unknown {

@@ -1,7 +1,40 @@
 import { Command } from 'commander';
-import { loadConfig, defaultRegistry, KeyStore, ProviderKeyManager, pricingFetcher, modelDiscovery } from '@untangle-ai/core';
+import { setDefaultResultOrder } from 'node:dns';
+import { loadConfig, defaultRegistry, KeyStore, ProviderKeyManager, pricingFetcher, modelDiscovery, createCustomProvider, type ModelCapability } from '@untangle-ai/core';
 import { startServer } from '@untangle-ai/server';
 import { logger } from '../utils/logger.js';
+
+function toApiKeyEnvVar(providerId: string): string {
+  return `${providerId.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase()}_API_KEY`;
+}
+
+function applyConfiguredProviderOverrides(config: Awaited<ReturnType<typeof loadConfig>>): void {
+  for (const [providerId, providerConfig] of Object.entries(config.providers ?? {})) {
+    const adapter = defaultRegistry.get(providerId);
+    if (!adapter) continue;
+
+    if (providerConfig.baseUrl) {
+      (adapter.config as { baseUrl: string }).baseUrl = providerConfig.baseUrl;
+    }
+
+    if (providerConfig.models?.length) {
+      const existingModels = adapter.config.models;
+      for (const configuredModel of providerConfig.models) {
+        const match = existingModels.find(m => m.id === configuredModel.id || m.alias === configuredModel.id || (configuredModel.alias && (m.id === configuredModel.alias || m.alias === configuredModel.alias)));
+        if (match) {
+          match.enabled = configuredModel.enabled;
+          if (configuredModel.alias) {
+            match.alias = configuredModel.alias;
+          }
+        }
+      }
+    }
+
+    if (providerConfig.enabled === false) {
+      defaultRegistry.setProviderEnabled(providerId, false);
+    }
+  }
+}
 
 export const startCommand = new Command('start')
   .description('Start the untangle-ai API gateway server')
@@ -13,6 +46,9 @@ export const startCommand = new Command('start')
     logger.banner();
 
     try {
+      // Prefer IPv4 in environments where IPv6 is unreachable
+      setDefaultResultOrder('ipv4first');
+
       // Load config
       logger.info('Loading configuration...');
       const config = loadConfig(options.config);
@@ -24,6 +60,35 @@ export const startCommand = new Command('start')
       if (options.host) {
         config.server.host = options.host;
       }
+
+      // Register custom providers from config
+      for (const [providerId, provider] of Object.entries(config.customProviders ?? {})) {
+        const adapter = createCustomProvider({
+          id: providerId,
+          name: providerId,
+          baseUrl: provider.baseUrl,
+          auth: provider.auth,
+          headers: provider.headers,
+          models: provider.models.map(model => ({
+            id: model.id,
+            alias: model.alias,
+            contextWindow: model.contextWindow ?? 8192,
+            maxOutputTokens: model.maxOutputTokens ?? 4096,
+            inputPricePer1M: undefined,
+            outputPricePer1M: undefined,
+            capabilities: (model.capabilities as ModelCapability[] | undefined) ?? ['chat'],
+            enabled: model.enabled,
+          })),
+          endpoints: {
+            chat: provider.endpoints.chat,
+          },
+        });
+        (adapter.config as { enabled: boolean }).enabled = provider.enabled;
+        defaultRegistry.register(adapter);
+      }
+
+      // Apply provider-level overrides from config
+      applyConfiguredProviderOverrides(config);
 
       // Build API key getter from config, stored keys, and environment
       const keyStore = new KeyStore();
@@ -50,7 +115,7 @@ export const startCommand = new Command('start')
         }
 
         // 3. Fall back to environment variable
-        const envKey = `${providerId.toUpperCase()}_API_KEY`;
+        const envKey = toApiKeyEnvVar(providerId);
         return process.env[envKey];
       };
 
@@ -74,6 +139,7 @@ export const startCommand = new Command('start')
         const apiKey = await getApiKey(provider.id);
         if (apiKey) {
           // Provider has API key - enable it and discover models
+          configuredProviders.push(provider.name);
           try {
             const discoveredModels = await modelDiscovery.discoverWithFallback(provider.id, apiKey);
             if (discoveredModels.length > 0) {
@@ -81,11 +147,11 @@ export const startCommand = new Command('start')
               (defaultRegistry as any).updateModels(provider.id, modelConfigs);
               const source = discoveredModels[0]?.source || 'unknown';
               logger.success(`  ${provider.name}: ${discoveredModels.length} models (source: ${source})`);
-              configuredProviders.push(provider.name);
+            } else {
+              logger.dim(`  ${provider.name}: using configured/default models`);
             }
           } catch (err) {
             logger.warn(`  ${provider.name}: Discovery failed, using defaults`);
-            configuredProviders.push(provider.name);
           }
         } else {
           // No API key - DISABLE the provider completely

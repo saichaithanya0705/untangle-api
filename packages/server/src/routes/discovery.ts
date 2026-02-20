@@ -171,7 +171,7 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
    * Discover all available models across all providers using intelligent fallback
    */
   app.get('/api/discover/all', async (c) => {
-    const providers = ctx.registry.list();
+    const providers = ctx.registry.listAll();
     const results: Record<string, { models: DiscoveredModel[]; source: string }> = {};
 
     // First fetch from OpenRouter for pricing reference
@@ -267,6 +267,26 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
     });
   });
 
+
+  /**
+   * Enable/disable a provider in the registry
+   */
+  app.post('/api/providers/:providerId/toggle', async (c) => {
+    const providerId = c.req.param('providerId');
+    const body = await c.req.json() as { enabled: boolean };
+
+    const success = (ctx.registry as any).setProviderEnabled(providerId, body.enabled);
+
+    if (!success) {
+      return c.json({ error: 'Provider not found' }, 404);
+    }
+
+    return c.json({
+      providerId,
+      enabled: body.enabled,
+    });
+  });
+
   /**
    * Get list of configured providers (those with API keys)
    * Only enabled providers are returned - providers without API keys are hidden
@@ -295,7 +315,7 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
    * Get all providers including unconfigured ones (for settings page)
    */
   app.get('/api/providers/all', async (c) => {
-    const allProviders = ctx.registry.list();
+    const allProviders = ctx.registry.listAll();
     const providers = [];
 
     for (const provider of allProviders) {
