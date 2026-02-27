@@ -4,13 +4,25 @@ import { cors } from 'hono/cors';
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import type { ProviderRegistry, Config } from '@untangle-ai/core';
+import {
+  ControlPlaneService,
+  DeploymentRouter,
+  type ProviderRegistry,
+  type Config,
+} from '@untangle-ai/core';
 import { createChatRoutes } from './routes/chat.js';
+import { createEmbeddingsRoutes } from './routes/embeddings.js';
 import { createModelsRoutes } from './routes/models.js';
+import { createResponsesRoutes } from './routes/responses.js';
+import { createMediaRoutes } from './routes/media.js';
+import { createRouterDebugRoutes } from './routes/router-debug.js';
+import { createControlPlaneRoutes } from './routes/control-plane.js';
 import { createKeysRoutes } from './routes/keys.js';
 import { createUsageRoutes } from './routes/usage.js';
 import { createDiscoveryRoutes } from './routes/discovery.js';
 import { loggingMiddleware } from './middleware/logging.js';
+import { observabilityMetrics } from './observability/metrics.js';
+import { setObservabilitySettings } from './observability/settings.js';
 
 function findUiDistPath(): string | null {
   const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -41,11 +53,18 @@ export interface ServerOptions {
   getApiKey: (providerId: string) => Promise<string | undefined> | string | undefined;
   setApiKey?: (providerId: string, apiKey: string) => Promise<void> | void;
   removeApiKey?: (providerId: string) => Promise<void> | void;
+  controlPlane?: ControlPlaneService;
   enableUi?: boolean;
 }
 
 export function createApp(options: ServerOptions) {
   const { registry, getApiKey, setApiKey, removeApiKey, enableUi } = options;
+  setObservabilitySettings(options.config.observability);
+  const router = new DeploymentRouter(options.config.routing);
+  const controlPlane = options.controlPlane
+    ?? (options.config.controlPlane.enabled ? new ControlPlaneService() : undefined);
+  const virtualKeyHeader = options.config.controlPlane.virtualKeyHeader;
+  const apiCompatibility = options.config.api?.compatibility;
 
   const app = new Hono();
 
@@ -55,13 +74,40 @@ export function createApp(options: ServerOptions) {
 
   // Health check
   app.get('/health', (c) => c.json({ status: 'ok' }));
+  app.get('/metrics', (c) => c.text(observabilityMetrics.renderPrometheus(), 200, {
+    'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
+  }));
+  app.get('/api/settings', (c) => c.json({
+    server: {
+      host: options.config.server.host,
+      port: options.config.server.port,
+    },
+    observability: {
+      level: options.config.observability?.logging.level ?? 'info',
+      tracingEnabled: options.config.observability?.tracing.enabled ?? true,
+    },
+    ui: {
+      enabled: !!enableUi,
+    },
+  }));
 
   // Mount routes
-  app.route('/', createChatRoutes({ registry, getApiKey }));
+  app.route('/', createChatRoutes({ registry, getApiKey, router, controlPlane, virtualKeyHeader, apiCompatibility }));
+  app.route('/', createEmbeddingsRoutes({ registry, getApiKey, router, controlPlane, virtualKeyHeader, apiCompatibility }));
+  app.route('/', createResponsesRoutes({ registry, getApiKey, router, controlPlane, virtualKeyHeader, apiCompatibility }));
+  app.route('/', createMediaRoutes({ registry, getApiKey, router, controlPlane, virtualKeyHeader, apiCompatibility }));
+  app.route('/', createRouterDebugRoutes({ registry, router }));
+  if (controlPlane) {
+    app.route('/', createControlPlaneRoutes({ controlPlane, apiCompatibility }));
+  }
   app.route('/', createModelsRoutes({ registry }));
-  app.route('/', createKeysRoutes({ registry, getApiKey, setApiKey, removeApiKey }));
-  app.route('/', createUsageRoutes());
-  app.route('/', createDiscoveryRoutes({ registry, getApiKey: async (id) => getApiKey(id) }));
+  app.route('/', createKeysRoutes({ registry, getApiKey, setApiKey, removeApiKey, apiCompatibility }));
+  app.route('/', createUsageRoutes({ controlPlane, apiCompatibility }));
+  app.route('/', createDiscoveryRoutes({
+    registry,
+    getApiKey: async (id) => getApiKey(id),
+    apiCompatibility,
+  }));
 
   // UI serving
   if (enableUi) {
@@ -128,8 +174,14 @@ export function startServer(options: ServerOptions) {
 }
 
 export { createChatRoutes } from './routes/chat.js';
+export { createEmbeddingsRoutes } from './routes/embeddings.js';
 export { createModelsRoutes } from './routes/models.js';
+export { createResponsesRoutes } from './routes/responses.js';
+export { createMediaRoutes } from './routes/media.js';
+export { createRouterDebugRoutes } from './routes/router-debug.js';
+export { createControlPlaneRoutes } from './routes/control-plane.js';
 export { createKeysRoutes } from './routes/keys.js';
 export { createUsageRoutes } from './routes/usage.js';
 export { createDiscoveryRoutes } from './routes/discovery.js';
 export { loggingMiddleware } from './middleware/logging.js';
+export { observabilityMetrics } from './observability/metrics.js';

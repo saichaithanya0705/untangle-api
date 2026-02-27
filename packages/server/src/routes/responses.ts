@@ -1,0 +1,720 @@
+import { Hono } from 'hono';
+import { stream } from 'hono/streaming';
+import type {
+  ProviderRegistry,
+  OpenAIError,
+  OpenAIMessage,
+  OpenAIRequest,
+  OpenAIResponse,
+  DeploymentRouter,
+  ControlPlaneService,
+  ApiCompatibilityConfig,
+} from '@untangle-ai/core';
+import { usageTracker } from '@untangle-ai/core';
+import { observabilityMetrics } from '../observability/metrics.js';
+import { tracedFetch } from '../observability/tracing.js';
+import { enforceVirtualKeyGate, estimateTextTokens } from './virtual-key.js';
+import { findUnknownFields, normalizeResponsesBody } from './compatibility.js';
+
+interface ResponsesContext {
+  registry: ProviderRegistry;
+  getApiKey: (providerId: string) => Promise<string | undefined> | string | undefined;
+  router: DeploymentRouter;
+  controlPlane?: ControlPlaneService;
+  virtualKeyHeader?: string;
+  apiCompatibility?: ApiCompatibilityConfig;
+}
+
+const RESPONSES_ALLOWED_FIELDS = new Set<string>([
+  'model',
+  'input',
+  'messages',
+  'prompt',
+  'instructions',
+  'stream',
+  'temperature',
+  'top_p',
+  'max_output_tokens',
+  'max_tokens',
+  'tools',
+  'tool_choice',
+]);
+
+interface ResponsesRequest {
+  model: string;
+  input: unknown;
+  instructions?: string;
+  stream?: boolean;
+  temperature?: number;
+  top_p?: number;
+  max_output_tokens?: number;
+  tools?: OpenAIRequest['tools'];
+  tool_choice?: OpenAIRequest['tool_choice'];
+}
+
+interface ResponseEnvelope {
+  id: string;
+  object: 'response';
+  created_at: number;
+  status: 'completed';
+  model: string;
+  output: Array<{
+    id: string;
+    type: 'message';
+    status: 'completed';
+    role: 'assistant';
+    content: Array<{
+      type: 'output_text';
+      text: string;
+      annotations: unknown[];
+    }>;
+  }>;
+  output_text: string;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+  };
+}
+
+function toHttpErrorStatus(status: number): 400 | 401 | 403 | 404 | 408 | 409 | 422 | 429 | 500 | 502 | 503 | 504 {
+  switch (status) {
+    case 400:
+    case 401:
+    case 403:
+    case 404:
+    case 408:
+    case 409:
+    case 422:
+    case 429:
+    case 500:
+    case 502:
+    case 503:
+    case 504:
+      return status;
+    default:
+      return status >= 400 && status < 500 ? 400 : 502;
+  }
+}
+
+function parseRetryAfterMs(value: string | null, nowMs = Date.now()): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  const asSeconds = Number(trimmed);
+  if (Number.isFinite(asSeconds) && asSeconds >= 0) {
+    return Math.floor(asSeconds * 1000);
+  }
+
+  const parsedAt = Date.parse(trimmed);
+  if (!Number.isNaN(parsedAt)) {
+    return Math.max(0, parsedAt - nowMs);
+  }
+
+  return undefined;
+}
+
+function parseSseEventData(eventBlock: string): string[] {
+  const dataLines = eventBlock
+    .split('\n')
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart());
+
+  if (dataLines.length > 0) {
+    return [dataLines.join('\n')];
+  }
+
+  const fallback = eventBlock.trim();
+  return fallback.length > 0 ? [fallback] : [];
+}
+
+async function readUpstreamError(response: Response): Promise<unknown> {
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+  if (contentType.includes('application/json')) {
+    return response.json().catch(() => ({ error: { message: response.statusText } }));
+  }
+
+  const text = await response.text().catch(() => response.statusText);
+  return { error: { message: text || response.statusText } };
+}
+
+function missingApiKeyError(providerId: string): OpenAIError {
+  return {
+    error: {
+      message: `No API key configured for provider: ${providerId}`,
+      type: 'authentication_error',
+      code: 'missing_api_key',
+    },
+  };
+}
+
+function asTextContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    const pieces = content
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object' && 'text' in item && typeof (item as { text?: unknown }).text === 'string') {
+          return (item as { text: string }).text;
+        }
+        return '';
+      })
+      .filter(Boolean);
+    return pieces.join('\n');
+  }
+  return '';
+}
+
+function normalizeInputToMessages(input: unknown): OpenAIMessage[] {
+  if (typeof input === 'string') {
+    return [{ role: 'user', content: input }];
+  }
+
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const messages: OpenAIMessage[] = [];
+  for (const item of input) {
+    if (typeof item === 'string') {
+      messages.push({ role: 'user', content: item });
+      continue;
+    }
+
+    if (!item || typeof item !== 'object') continue;
+    const roleRaw = (item as { role?: unknown }).role;
+    const contentRaw = (item as { content?: unknown }).content;
+    const role = roleRaw === 'system' || roleRaw === 'assistant' || roleRaw === 'tool'
+      ? roleRaw
+      : 'user';
+    const content = asTextContent(contentRaw);
+    if (content.length > 0) {
+      messages.push({ role, content });
+    }
+  }
+
+  return messages;
+}
+
+function isValidResponsesRequest(body: unknown): body is ResponsesRequest {
+  if (!body || typeof body !== 'object') return false;
+  const maybe = body as Partial<ResponsesRequest>;
+  if (typeof maybe.model !== 'string' || maybe.model.length === 0) return false;
+  if (maybe.input === undefined || maybe.input === null) return false;
+  const messages = normalizeInputToMessages(maybe.input);
+  return messages.length > 0;
+}
+
+function toChatRequest(body: ResponsesRequest): OpenAIRequest {
+  const messages = normalizeInputToMessages(body.input);
+  if (body.instructions && body.instructions.length > 0) {
+    messages.unshift({ role: 'system', content: body.instructions });
+  }
+
+  return {
+    model: body.model,
+    messages,
+    stream: body.stream,
+    temperature: body.temperature,
+    top_p: body.top_p,
+    max_tokens: body.max_output_tokens,
+    tools: body.tools,
+    tool_choice: body.tool_choice,
+  };
+}
+
+function buildResponseEnvelope(response: OpenAIResponse): ResponseEnvelope {
+  const text = response.choices?.[0]?.message?.content ?? '';
+  return {
+    id: `resp_${response.id}`,
+    object: 'response',
+    created_at: response.created,
+    status: 'completed',
+    model: response.model,
+    output: [{
+      id: `msg_${response.id}`,
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      content: [{
+        type: 'output_text',
+        text,
+        annotations: [],
+      }],
+    }],
+    output_text: text,
+    usage: response.usage ? {
+      input_tokens: response.usage.prompt_tokens,
+      output_tokens: response.usage.completion_tokens,
+      total_tokens: response.usage.total_tokens,
+    } : undefined,
+  };
+}
+
+export function buildResponsesContinuationRequest(
+  baseRequest: OpenAIRequest,
+  modelId: string,
+  partialOutput: string,
+  policyPrompt: string,
+): OpenAIRequest {
+  if (partialOutput.trim().length === 0) {
+    return { ...baseRequest, model: modelId, stream: true };
+  }
+
+  return {
+    ...baseRequest,
+    model: modelId,
+    stream: true,
+    messages: [
+      ...baseRequest.messages,
+      { role: 'assistant', content: partialOutput },
+      { role: 'user', content: policyPrompt },
+    ],
+  };
+}
+
+async function writeEvent(
+  streamWriter: { write: (input: string) => Promise<unknown> },
+  event: string,
+  payload: Record<string, unknown>,
+) {
+  await streamWriter.write(`event: ${event}\n`);
+  await streamWriter.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+export function createResponsesRoutes(ctx: ResponsesContext) {
+  const app = new Hono();
+  const deploymentRouter = ctx.router;
+
+  app.post('/v1/responses', async (c) => {
+    const startTime = Date.now();
+    let providerId = '';
+    let modelId = '';
+
+    try {
+      const rawBody = await c.req.json().catch(() => null);
+      const normalizedBody = normalizeResponsesBody(rawBody, ctx.apiCompatibility);
+      if (!normalizedBody) {
+        return c.json<OpenAIError>({
+          error: {
+            message: 'Invalid request body. Expected { model: string, input: string | input[] }',
+            type: 'invalid_request_error',
+            code: 'invalid_body',
+          },
+        }, 400);
+      }
+
+      const unknownFields = findUnknownFields(normalizedBody, RESPONSES_ALLOWED_FIELDS, ctx.apiCompatibility);
+      if (unknownFields.length > 0) {
+        return c.json<OpenAIError>({
+          error: {
+            message: `Unknown request fields: ${unknownFields.join(', ')}`,
+            type: 'invalid_request_error',
+            code: 'unknown_fields',
+          },
+        }, 400);
+      }
+
+      if (!isValidResponsesRequest(normalizedBody)) {
+        return c.json<OpenAIError>({
+          error: {
+            message: 'Invalid request body. Expected { model: string, input: string | input[] }',
+            type: 'invalid_request_error',
+            code: 'invalid_body',
+          },
+        }, 400);
+      }
+
+      const body: ResponsesRequest = normalizedBody;
+      const chatRequest = toChatRequest(body);
+      const estimatedInputTokens = estimateTextTokens(JSON.stringify(chatRequest.messages));
+      const virtualKeyGate = await enforceVirtualKeyGate(c, ctx, {
+        modelId: chatRequest.model,
+        inputTokens: estimatedInputTokens,
+      });
+      if (virtualKeyGate.deniedResponse) {
+        return virtualKeyGate.deniedResponse;
+      }
+      const usageMetadata = virtualKeyGate.virtualKeyId
+        ? { virtualKeyId: virtualKeyGate.virtualKeyId }
+        : undefined;
+      const selection = deploymentRouter.selectDeployments(chatRequest.model, ctx.registry);
+
+      if (selection.deployments.length === 0) {
+        return c.json<OpenAIError>({
+          error: { message: `Model not found: ${chatRequest.model}`, type: 'invalid_request_error', code: 'model_not_found' },
+        }, 404);
+      }
+
+      if (body.stream) {
+        c.header('Content-Type', 'text/event-stream; charset=utf-8');
+        c.header('Cache-Control', 'no-cache');
+        c.header('Connection', 'keep-alive');
+        c.header('X-Accel-Buffering', 'no');
+
+        return stream(c, async (streamWriter) => {
+          let streamStarted = false;
+          let outputText = '';
+          let totalOutputTokens = 0;
+          let lastError: OpenAIError | null = null;
+          let attempt = 0;
+
+          for (const deployment of selection.deployments) {
+            attempt += 1;
+            providerId = deployment.providerId;
+            modelId = deployment.modelId;
+
+            const apiKey = await ctx.getApiKey(deployment.providerId);
+            if (!apiKey) {
+              lastError = missingApiKeyError(deployment.providerId);
+              observabilityMetrics.recordFallback();
+              continue;
+            }
+
+            const allowMidStreamContinuation = streamStarted
+              && deployment.streamFallbackPolicy.mode === 'continue-with-policy-prompt';
+            const requestForDeployment: OpenAIRequest = allowMidStreamContinuation
+              ? buildResponsesContinuationRequest(
+                chatRequest,
+                deployment.modelId,
+                outputText,
+                deployment.streamFallbackPolicy.policyPrompt,
+              )
+              : { ...chatRequest, model: deployment.modelId, stream: true };
+            const providerRequest = deployment.adapter.transformRequest(requestForDeployment);
+            const endpointUrl = deployment.adapter.getEndpointUrl('chat', { request: requestForDeployment, apiKey });
+            const headers = {
+              'Content-Type': 'application/json',
+              ...deployment.adapter.getAuthHeaders(apiKey),
+            };
+
+            const attemptStart = Date.now();
+            let sseBuffer = '';
+
+            try {
+              const response = await tracedFetch(c, endpointUrl, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(providerRequest),
+              }, {
+                providerId: deployment.providerId,
+                modelId: deployment.modelId,
+                endpoint: 'responses.stream',
+                attempt,
+              });
+
+              if (!response.ok) {
+                const upstreamError = await readUpstreamError(response);
+                const normalized = deployment.adapter.normalizeError(upstreamError);
+                lastError = normalized;
+
+                deploymentRouter.recordFailure(deployment, {
+                  retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
+                });
+
+                if (
+                  deploymentRouter.isRetryableStatus(deployment, response.status)
+                  && (
+                    !streamStarted
+                    || deployment.streamFallbackPolicy.mode === 'continue-with-policy-prompt'
+                  )
+                ) {
+                  observabilityMetrics.recordFallback();
+                  continue;
+                }
+
+                await writeEvent(streamWriter, 'response.error', {
+                  type: 'response.error',
+                  error: normalized.error,
+                });
+                usageTracker.recordUsage(
+                  providerId,
+                  modelId,
+                  0,
+                  totalOutputTokens,
+                  Date.now() - startTime,
+                  false,
+                  normalized.error.message,
+                  usageMetadata,
+                );
+                return;
+              }
+
+              if (!response.body) {
+                throw new Error('Provider returned an empty streaming response body');
+              }
+
+              if (!streamStarted) {
+                await writeEvent(streamWriter, 'response.created', {
+                  type: 'response.created',
+                  response: {
+                    id: `resp_${Date.now()}`,
+                    object: 'response',
+                    model: deployment.modelId,
+                    status: 'in_progress',
+                  },
+                });
+              }
+
+              const reader = response.body.getReader();
+              const decoder = new TextDecoder();
+
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                sseBuffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+
+                let eventBoundary = sseBuffer.indexOf('\n\n');
+                while (eventBoundary !== -1) {
+                  const block = sseBuffer.slice(0, eventBoundary);
+                  sseBuffer = sseBuffer.slice(eventBoundary + 2);
+
+                  for (const data of parseSseEventData(block)) {
+                    if (data === '[DONE]') {
+                      streamStarted = true;
+                      await writeEvent(streamWriter, 'response.output_text.done', {
+                        type: 'response.output_text.done',
+                        text: outputText,
+                      });
+                      await writeEvent(streamWriter, 'response.completed', {
+                        type: 'response.completed',
+                        response: {
+                          object: 'response',
+                          model: deployment.modelId,
+                          status: 'completed',
+                          output_text: outputText,
+                        },
+                      });
+                      deploymentRouter.recordSuccess(deployment, Date.now() - attemptStart);
+                      usageTracker.recordUsage(
+                        providerId,
+                        modelId,
+                        estimatedInputTokens,
+                        totalOutputTokens,
+                        Date.now() - startTime,
+                        true,
+                        undefined,
+                        usageMetadata,
+                      );
+                      return;
+                    }
+
+                    const chunk = deployment.adapter.transformStreamChunk(data, requestForDeployment);
+                    if (!chunk) continue;
+
+                    const delta = chunk.choices?.[0]?.delta?.content ?? '';
+                    if (delta.length > 0) {
+                      streamStarted = true;
+                      outputText += delta;
+                      totalOutputTokens += Math.ceil(delta.length / 4);
+                      await writeEvent(streamWriter, 'response.output_text.delta', {
+                        type: 'response.output_text.delta',
+                        delta,
+                      });
+                    }
+                  }
+
+                  eventBoundary = sseBuffer.indexOf('\n\n');
+                }
+              }
+
+              deploymentRouter.recordSuccess(deployment, Date.now() - attemptStart);
+              await writeEvent(streamWriter, 'response.output_text.done', {
+                type: 'response.output_text.done',
+                text: outputText,
+              });
+              await writeEvent(streamWriter, 'response.completed', {
+                type: 'response.completed',
+                response: {
+                  object: 'response',
+                  model: deployment.modelId,
+                  status: 'completed',
+                  output_text: outputText,
+                },
+              });
+              usageTracker.recordUsage(
+                providerId,
+                modelId,
+                estimatedInputTokens,
+                totalOutputTokens,
+                Date.now() - startTime,
+                true,
+                undefined,
+                usageMetadata,
+              );
+              return;
+            } catch (err) {
+              const normalized = deployment.adapter.normalizeError(err);
+              lastError = normalized;
+              deploymentRouter.recordFailure(deployment);
+
+              if (
+                deploymentRouter.isRetryableError(deployment, err)
+                && (
+                  !streamStarted
+                  || deployment.streamFallbackPolicy.mode === 'continue-with-policy-prompt'
+                )
+              ) {
+                observabilityMetrics.recordFallback();
+                continue;
+              }
+
+              await writeEvent(streamWriter, 'response.error', {
+                type: 'response.error',
+                error: normalized.error,
+              });
+              usageTracker.recordUsage(
+                providerId,
+                modelId,
+                0,
+                totalOutputTokens,
+                Date.now() - startTime,
+                false,
+                String(err),
+                usageMetadata,
+              );
+              return;
+            }
+          }
+
+          const finalError: OpenAIError = lastError ?? {
+            error: {
+              message: 'No healthy deployment available for the requested model.',
+              type: 'service_unavailable',
+              code: 'no_healthy_deployment',
+            },
+          };
+          await writeEvent(streamWriter, 'response.error', {
+            type: 'response.error',
+            error: finalError.error,
+          });
+        });
+      }
+
+      let lastError: OpenAIError | null = null;
+      let lastStatus = 500;
+      let attempt = 0;
+
+      for (const deployment of selection.deployments) {
+        attempt += 1;
+        providerId = deployment.providerId;
+        modelId = deployment.modelId;
+
+        const apiKey = await ctx.getApiKey(deployment.providerId);
+        if (!apiKey) {
+          lastError = missingApiKeyError(deployment.providerId);
+          lastStatus = 401;
+          observabilityMetrics.recordFallback();
+          continue;
+        }
+
+        const requestForDeployment: OpenAIRequest = { ...chatRequest, model: deployment.modelId, stream: false };
+        const providerRequest = deployment.adapter.transformRequest(requestForDeployment);
+        const endpointUrl = deployment.adapter.getEndpointUrl('chat', { request: requestForDeployment, apiKey });
+        const headers = {
+          'Content-Type': 'application/json',
+          ...deployment.adapter.getAuthHeaders(apiKey),
+        };
+
+        const attemptStart = Date.now();
+
+        try {
+          const response = await tracedFetch(c, endpointUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(providerRequest),
+          }, {
+            providerId: deployment.providerId,
+            modelId: deployment.modelId,
+            endpoint: 'responses',
+            attempt,
+          });
+
+          if (!response.ok) {
+            const upstreamError = await readUpstreamError(response);
+            const normalized = deployment.adapter.normalizeError(upstreamError);
+            deploymentRouter.recordFailure(deployment, {
+              retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
+            });
+
+            lastError = normalized;
+            lastStatus = response.status;
+
+            if (deploymentRouter.isRetryableStatus(deployment, response.status)) {
+              observabilityMetrics.recordFallback();
+              continue;
+            }
+
+            usageTracker.recordUsage(
+              providerId,
+              modelId,
+              0,
+              0,
+              Date.now() - startTime,
+              false,
+              normalized.error.message,
+              usageMetadata,
+            );
+            return c.json(normalized, toHttpErrorStatus(response.status));
+          }
+
+          const providerResponse = await response.json();
+          const chatResponse = deployment.adapter.transformResponse(
+            providerResponse,
+            requestForDeployment,
+          ) as OpenAIResponse;
+
+          deploymentRouter.recordSuccess(deployment, Date.now() - attemptStart);
+
+          const inputTokens = chatResponse.usage?.prompt_tokens ?? estimatedInputTokens;
+          const outputTokens = chatResponse.usage?.completion_tokens
+            ?? Math.ceil((chatResponse.choices?.[0]?.message?.content?.length ?? 0) / 4);
+
+          usageTracker.recordUsage(
+            providerId,
+            modelId,
+            inputTokens,
+            outputTokens,
+            Date.now() - startTime,
+            true,
+            undefined,
+            usageMetadata,
+          );
+
+          return c.json(buildResponseEnvelope(chatResponse));
+        } catch (err) {
+          deploymentRouter.recordFailure(deployment);
+          const normalized = deployment.adapter.normalizeError(err);
+          lastError = normalized;
+          lastStatus = 502;
+
+          if (deploymentRouter.isRetryableError(deployment, err)) {
+            observabilityMetrics.recordFallback();
+            continue;
+          }
+
+          usageTracker.recordUsage(providerId, modelId, 0, 0, Date.now() - startTime, false, String(err), usageMetadata);
+          return c.json(normalized, 500);
+        }
+      }
+
+      const finalError: OpenAIError = lastError ?? {
+        error: {
+          message: 'No healthy deployment available for the requested model.',
+          type: 'service_unavailable',
+          code: 'no_healthy_deployment',
+        },
+      };
+      return c.json(finalError, toHttpErrorStatus(lastStatus));
+    } catch (err) {
+      console.error('Responses API error:', err);
+      return c.json<OpenAIError>({
+        error: { message: err instanceof Error ? err.message : 'Internal server error', type: 'internal_error', code: null },
+      }, 500);
+    }
+  });
+
+  return app;
+}

@@ -50,5 +50,8 @@ export interface ProviderRegistry {
   getForModel(modelId: string): ProviderAdapter | undefined;
   list(): ProviderConfig[];
   listAll(): ProviderConfig[];
-  listModels(): Array<{ model: ModelConfig; provider: ProviderConfig }>;
+  listModels(options?: {
+    includeDisabledProviders?: boolean;
+    includeDisabledModels?: boolean;
+  }): Array<{ model: ModelConfig; provider: ProviderConfig }>;
 }

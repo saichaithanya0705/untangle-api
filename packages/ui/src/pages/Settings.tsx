@@ -1,26 +1,90 @@
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { api, type ServerSettings } from '@/lib/api';
 
 export default function Settings() {
+  const [settings, setSettings] = useState<ServerSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadSettings() {
+      setLoading(true);
+      try {
+        const data = await api.getSettings();
+        setSettings(data);
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load settings');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    void loadSettings();
+  }, []);
+
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
       <Card>
         <CardHeader>
           <CardTitle>Server Configuration</CardTitle>
           <CardDescription>
-            These settings are read from untangle.yaml. Edit the config file to change them.
+            These values reflect the currently running server process.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-2">
             <Label htmlFor="port">Port</Label>
-            <Input id="port" type="number" defaultValue={3000} disabled className="max-w-xs" />
+            <Input
+              id="port"
+              type="number"
+              value={loading ? '' : (settings?.server.port ?? '')}
+              disabled
+              className="max-w-xs"
+              readOnly
+            />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="host">Host</Label>
-            <Input id="host" type="text" defaultValue="localhost" disabled className="max-w-xs" />
+            <Input
+              id="host"
+              type="text"
+              value={loading ? '' : (settings?.server.host ?? '')}
+              disabled
+              className="max-w-xs"
+              readOnly
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="log-level">Log Level</Label>
+            <Input
+              id="log-level"
+              type="text"
+              value={loading ? '' : (settings?.observability?.level ?? '')}
+              disabled
+              className="max-w-xs"
+              readOnly
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="tracing-enabled">Tracing Enabled</Label>
+            <Input
+              id="tracing-enabled"
+              type="text"
+              value={loading ? '' : (settings?.observability?.tracingEnabled ? 'true' : 'false')}
+              disabled
+              className="max-w-xs"
+              readOnly
+            />
           </div>
         </CardContent>
       </Card>

@@ -1,0 +1,70 @@
+{
+  "request": {
+    "model": "claude-sonnet-4",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are concise."
+      },
+      {
+        "role": "user",
+        "content": "Get weather for SF."
+      }
+    ],
+    "max_tokens": 256,
+    "temperature": 0.2,
+    "stop": ["END"],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get weather by city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": { "type": "string" }
+            },
+            "required": ["city"]
+          }
+        }
+      }
+    ],
+    "tool_choice": {
+      "type": "function",
+      "function": {
+        "name": "get_weather"
+      }
+    }
+  },
+  "expected": {
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 256,
+    "temperature": 0.2,
+    "system": "You are concise.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Get weather for SF."
+      }
+    ],
+    "stop_sequences": ["END"],
+    "tools": [
+      {
+        "name": "get_weather",
+        "description": "Get weather by city.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "city": { "type": "string" }
+          },
+          "required": ["city"]
+        }
+      }
+    ],
+    "tool_choice": {
+      "type": "tool",
+      "name": "get_weather"
+    }
+  }
+}

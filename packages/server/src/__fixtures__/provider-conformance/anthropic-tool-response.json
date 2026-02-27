@@ -1,0 +1,62 @@
+{
+  "request": {
+    "model": "claude-sonnet-4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Call get_weather."
+      }
+    ]
+  },
+  "response": {
+    "id": "msg_123",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_123",
+        "name": "get_weather",
+        "input": {
+          "city": "San Francisco"
+        }
+      }
+    ],
+    "model": "claude-sonnet-4-20250514",
+    "stop_reason": "tool_use",
+    "usage": {
+      "input_tokens": 12,
+      "output_tokens": 8
+    }
+  },
+  "expected": {
+    "id": "msg_123",
+    "object": "chat.completion",
+    "model": "claude-sonnet-4-20250514",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "toolu_123",
+              "type": "function",
+              "function": {
+                "name": "get_weather",
+                "arguments": "{\"city\":\"San Francisco\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 12,
+      "completion_tokens": 8,
+      "total_tokens": 20
+    }
+  }
+}

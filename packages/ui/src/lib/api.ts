@@ -17,6 +17,7 @@ export interface FullModel {
   alias?: string;
   providerId: string;
   providerName: string;
+  providerEnabled?: boolean;
   contextWindow: number;
   maxOutputTokens: number;
   inputPricePer1M?: number;
@@ -58,6 +59,20 @@ export interface ProviderKey {
 export interface ServerHealth {
   status: 'online' | 'offline';
   version?: string;
+}
+
+export interface ServerSettings {
+  server: {
+    host: string;
+    port: number;
+  };
+  observability?: {
+    level: string;
+    tracingEnabled: boolean;
+  };
+  ui?: {
+    enabled: boolean;
+  };
 }
 
 export interface DiscoveryResult {
@@ -136,7 +151,7 @@ export const api = {
     if (!res.ok) throw new Error('Failed to add models');
   },
 
-  // Providers - only return configured providers (those with API keys)
+  // Providers - enabled providers only
   async getProviders(): Promise<Provider[]> {
     const res = await fetch(`${BASE_URL}/api/providers`);
     if (!res.ok) throw new Error('Failed to fetch providers');
@@ -218,6 +233,12 @@ export const api = {
     } catch {
       return { status: 'offline' };
     }
+  },
+
+  async getSettings(): Promise<ServerSettings> {
+    const res = await fetch(`${BASE_URL}/api/settings`);
+    if (!res.ok) throw new Error('Failed to fetch settings');
+    return res.json();
   },
 
   // Pricing

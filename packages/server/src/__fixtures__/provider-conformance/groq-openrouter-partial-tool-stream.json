@@ -1,0 +1,79 @@
+{
+  "events": [
+    {
+      "id": "chatcmpl-stream-1",
+      "object": "chat.completion.chunk",
+      "created": 1730000001,
+      "model": "llama-3.3-70b-versatile",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "tool_calls": [
+              {
+                "id": "call_trip_1",
+                "type": "function",
+                "function": {
+                  "name": "plan_trip",
+                  "arguments": "{\"location\":\"San"
+                }
+              }
+            ]
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl-stream-1",
+      "object": "chat.completion.chunk",
+      "created": 1730000002,
+      "model": "llama-3.3-70b-versatile",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {
+            "tool_calls": [
+              {
+                "id": "call_trip_1",
+                "type": "function",
+                "function": {
+                  "name": "plan_trip",
+                  "arguments": " Francisco\",\"mode\":\"driving\"}"
+                }
+              }
+            ]
+          },
+          "finish_reason": null
+        }
+      ]
+    },
+    {
+      "id": "chatcmpl-stream-1",
+      "object": "chat.completion.chunk",
+      "created": 1730000003,
+      "model": "llama-3.3-70b-versatile",
+      "choices": [
+        {
+          "index": 0,
+          "delta": {},
+          "finish_reason": "tool_calls"
+        }
+      ]
+    }
+  ],
+  "expected": [
+    {
+      "partialArguments": "{\"location\":\"San",
+      "finishReason": null
+    },
+    {
+      "partialArguments": " Francisco\",\"mode\":\"driving\"}",
+      "finishReason": null
+    },
+    {
+      "partialArguments": null,
+      "finishReason": "tool_calls"
+    }
+  ]
+}

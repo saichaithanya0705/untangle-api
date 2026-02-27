@@ -1,0 +1,52 @@
+{
+  "request": {
+    "model": "gemini-1.5-flash",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hello"
+      }
+    ]
+  },
+  "events": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [{ "text": "part-one " }]
+          }
+        }
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [{ "text": "part-two" }]
+          }
+        }
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "finishReason": "STOP"
+        }
+      ]
+    }
+  ],
+  "expected": [
+    {
+      "deltaContent": "part-one ",
+      "finishReason": null
+    },
+    {
+      "deltaContent": "part-two",
+      "finishReason": null
+    },
+    {
+      "deltaContent": null,
+      "finishReason": "stop"
+    }
+  ]
+}

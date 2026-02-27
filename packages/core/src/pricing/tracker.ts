@@ -17,6 +17,7 @@ export interface UsageRecord {
   durationMs: number;
   success: boolean;
   error?: string;
+  metadata?: Record<string, string>;
 }
 
 export interface UsageSummary {
@@ -48,9 +49,12 @@ export interface UsageFilter {
   limit?: number;
 }
 
+export type UsageRecordListener = (record: UsageRecord) => void | Promise<void>;
+
 export class UsageTracker {
   private records: UsageRecord[] = [];
   private maxRecords: number = 10000; // Keep last 10k records in memory
+  private listeners = new Set<UsageRecordListener>();
 
   /**
    * Record a completed request
@@ -62,7 +66,8 @@ export class UsageTracker {
     outputTokens: number,
     durationMs: number,
     success: boolean,
-    error?: string
+    error?: string,
+    metadata?: Record<string, string>,
   ): UsageRecord {
     const cost = pricingFetcher.calculateCost(providerId, modelId, inputTokens, outputTokens);
 
@@ -79,9 +84,16 @@ export class UsageTracker {
       durationMs,
       success,
       error,
+      metadata,
     };
 
     this.records.push(record);
+
+    for (const listener of this.listeners) {
+      Promise.resolve(listener(record)).catch(() => {
+        // Listener failures should not affect request handling.
+      });
+    }
 
     // Trim old records if we exceed max
     if (this.records.length > this.maxRecords) {
@@ -217,6 +229,17 @@ export class UsageTracker {
     if (this.records.length > this.maxRecords) {
       this.records = this.records.slice(-this.maxRecords);
     }
+  }
+
+  addListener(listener: UsageRecordListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  clearListeners(): void {
+    this.listeners.clear();
   }
 }
 

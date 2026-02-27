@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
-import type { ProviderRegistry } from '@untangle-ai/core';
+import type { ProviderRegistry, ApiCompatibilityConfig } from '@untangle-ai/core';
+import { findUnknownFields, resolveApiCompatibility } from './compatibility.js';
 
 interface KeysContext {
   registry: ProviderRegistry;
   getApiKey: (providerId: string) => Promise<string | undefined> | string | undefined;
   setApiKey?: (providerId: string, apiKey: string) => Promise<void> | void;
   removeApiKey?: (providerId: string) => Promise<void> | void;
+  apiCompatibility?: ApiCompatibilityConfig;
 }
 
 interface ProviderKeyStatus {
@@ -30,6 +32,7 @@ function toEnvVar(providerId: string): string {
 
 export function createKeysRoutes(ctx: KeysContext) {
   const app = new Hono();
+  const compatibility = resolveApiCompatibility(ctx.apiCompatibility);
 
   // List all providers with key status
   app.get('/api/keys', async (c) => {
@@ -90,10 +93,23 @@ export function createKeysRoutes(ctx: KeysContext) {
     }
 
     const body = await c.req.json().catch(() => null) as { apiKey?: string } | null;
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+      const unknownFields = findUnknownFields(
+        body as Record<string, unknown>,
+        new Set(['apiKey']),
+        compatibility,
+      );
+      if (unknownFields.length > 0) {
+        return c.json(
+          { error: { message: `Unknown request fields: ${unknownFields.join(', ')}`, code: 'unknown_fields' } },
+          400
+        );
+      }
+    }
 
     if (!body || !body.apiKey || typeof body.apiKey !== 'string') {
       return c.json(
-        { error: { message: 'apiKey is required and must be a string' } },
+        { error: { message: 'apiKey is required and must be a string', code: 'invalid_body' } },
         400
       );
     }
@@ -132,7 +148,6 @@ export function createKeysRoutes(ctx: KeysContext) {
     }
 
     await ctx.removeApiKey(providerId);
-    ctx.registry.setProviderEnabled(providerId, false);
 
     return c.json({
       success: true,
@@ -155,10 +170,10 @@ export function createKeysRoutes(ctx: KeysContext) {
     const apiKey = await ctx.getApiKey(providerId);
 
     if (!apiKey) {
-      return c.json(
-        { error: { message: `No API key configured for ${provider.config.name}` } },
-        400
-      );
+      return c.json({
+        success: false,
+        error: { message: `No API key configured for ${provider.config.name}` },
+      });
     }
 
     try {
@@ -175,16 +190,16 @@ export function createKeysRoutes(ctx: KeysContext) {
       }).finally(() => clearTimeout(timeout));
 
       if (!response.ok) {
-        const text = await response.text().catch(() => response.statusText);
-        return c.json(
-          {
-            success: false,
-            error: {
-              message: `Upstream test failed (${response.status}): ${text || response.statusText}`,
-            },
-          },
-          400
-        );
+        const message = response.status === 401 || response.status === 403
+          ? 'Authentication failed with upstream provider. Verify API key format and permissions.'
+          : response.status === 429
+            ? 'Upstream provider rate-limited the validation request. Try again in a moment.'
+            : `Upstream test failed (${response.status}).`;
+
+        return c.json({
+          success: false,
+          error: { message },
+        });
       }
 
       const payload = await response.json().catch(() => ({})) as {
@@ -209,8 +224,7 @@ export function createKeysRoutes(ctx: KeysContext) {
         {
           success: false,
           error: { message: `API key test failed: ${message}` },
-        },
-        400
+        }
       );
     }
   });

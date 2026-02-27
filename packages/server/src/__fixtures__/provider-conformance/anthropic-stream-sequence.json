@@ -1,0 +1,44 @@
+{
+  "request": {
+    "model": "claude-sonnet-4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hello"
+      }
+    ]
+  },
+  "events": [
+    {
+      "type": "content_block_delta",
+      "delta": {
+        "type": "text_delta",
+        "text": "hello "
+      }
+    },
+    {
+      "type": "content_block_delta",
+      "delta": {
+        "type": "text_delta",
+        "text": "world"
+      }
+    },
+    {
+      "type": "message_stop"
+    }
+  ],
+  "expected": [
+    {
+      "deltaContent": "hello ",
+      "finishReason": null
+    },
+    {
+      "deltaContent": "world",
+      "finishReason": null
+    },
+    {
+      "deltaContent": null,
+      "finishReason": "stop"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+export {
+  DeploymentRouter,
+  type RoutingStrategy,
+  type RetryPolicyConfig,
+  type CircuitBreakerConfig,
+  type StreamFallbackMode,
+  type StreamFallbackPolicyConfig,
+  type RoutingDeploymentConfig,
+  type DeploymentGroupConfig,
+  type RoutingConfig,
+  type ResolvedDeployment,
+  type DeploymentSelection,
+  type DeploymentFailure,
+  type DeploymentRuntimeState,
+  type SelectionDebugDeployment,
+  type SelectionDebugSnapshot,
+} from './router.js';

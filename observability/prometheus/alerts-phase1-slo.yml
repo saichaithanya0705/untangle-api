@@ -1,0 +1,43 @@
+groups:
+  - name: untangle-phase1-slo
+    interval: 30s
+    rules:
+      - alert: UntangleFallbackSurge
+        expr: rate(untangle_router_fallback_total[5m]) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: untangle-ai
+        annotations:
+          summary: "Untangle fallback surge detected"
+          description: "Fallback decisions are above expected baseline in the last 5m."
+
+      - alert: UntangleProviderErrorBurst
+        expr: sum by (provider, endpoint) (rate(untangle_provider_errors_total[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: untangle-ai
+        annotations:
+          summary: "Untangle provider error burst"
+          description: "Upstream provider errors are elevated for provider={{ $labels.provider }}, endpoint={{ $labels.endpoint }}."
+
+      - alert: UntangleRateLimitDenialsSpike
+        expr: sum(rate(untangle_rate_limit_hits_total[5m])) > 1
+        for: 15m
+        labels:
+          severity: warning
+          service: untangle-ai
+        annotations:
+          summary: "Untangle rate-limit denials spiking"
+          description: "Virtual-key denials are above expected baseline in the last 5m."
+
+      - alert: UntangleTraceSamplingDriftHigh
+        expr: untangle_trace_sampling_drift > 0.2
+        for: 10m
+        labels:
+          severity: warning
+          service: untangle-ai
+        annotations:
+          summary: "Untangle trace sampling drift is high"
+          description: "Observed trace sampling has drifted from configured sample rate by more than 0.2."

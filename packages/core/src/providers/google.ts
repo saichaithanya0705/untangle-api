@@ -34,7 +34,28 @@ const GOOGLE_MODELS: ModelConfig[] = [
 
 interface GoogleContent {
   role: 'user' | 'model';
-  parts: Array<{ text: string }>;
+  parts: Array<{
+    text?: string;
+    functionCall?: {
+      name: string;
+      args?: Record<string, unknown>;
+    };
+  }>;
+}
+
+interface GoogleTool {
+  functionDeclarations: Array<{
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  }>;
+}
+
+interface GoogleToolConfig {
+  functionCallingConfig: {
+    mode: 'AUTO' | 'NONE' | 'ANY';
+    allowedFunctionNames?: string[];
+  };
 }
 
 interface GoogleRequest {
@@ -45,13 +66,23 @@ interface GoogleRequest {
     topP?: number;
     maxOutputTokens?: number;
     stopSequences?: string[];
+    responseMimeType?: string;
+    responseSchema?: Record<string, unknown>;
   };
+  tools?: GoogleTool[];
+  toolConfig?: GoogleToolConfig;
 }
 
 interface GoogleResponse {
   candidates: Array<{
     content: {
-      parts: Array<{ text: string }>;
+      parts: Array<{
+        text?: string;
+        functionCall?: {
+          name: string;
+          args?: Record<string, unknown>;
+        };
+      }>;
       role: string;
     };
     finishReason: string;
@@ -92,6 +123,15 @@ export class GoogleAdapter extends BaseProviderAdapter {
   }
 
   transformRequest(request: OpenAIRequest): GoogleRequest {
+    const extendedRequest = request as OpenAIRequest & {
+      response_format?: string | {
+        type?: string;
+        json_schema?: {
+          schema?: Record<string, unknown>;
+        };
+      };
+    };
+
     // Extract system message
     const systemMessages = request.messages.filter(m => m.role === 'system');
     const systemInstruction = systemMessages.length > 0
@@ -106,6 +146,43 @@ export class GoogleAdapter extends BaseProviderAdapter {
         parts: [{ text: m.content ?? '' }],
       }));
 
+    const functionDeclarations = request.tools?.map((tool) => ({
+      name: tool.function.name,
+      description: tool.function.description,
+      parameters: (tool.function.parameters as Record<string, unknown> | undefined) ?? {
+        type: 'object',
+        properties: {},
+      },
+    }));
+
+    let toolConfig: GoogleToolConfig | undefined;
+    if (request.tool_choice === 'auto') {
+      toolConfig = { functionCallingConfig: { mode: 'AUTO' } };
+    } else if (request.tool_choice === 'none') {
+      toolConfig = { functionCallingConfig: { mode: 'NONE' } };
+    } else if (typeof request.tool_choice === 'object' && request.tool_choice.type === 'function') {
+      toolConfig = {
+        functionCallingConfig: {
+          mode: 'ANY',
+          allowedFunctionNames: [request.tool_choice.function.name],
+        },
+      };
+    }
+
+    let responseMimeType: string | undefined;
+    let responseSchema: Record<string, unknown> | undefined;
+    const responseFormat = extendedRequest.response_format;
+    if (typeof responseFormat === 'string') {
+      if (responseFormat === 'json') {
+        responseMimeType = 'application/json';
+      }
+    } else if (responseFormat?.type === 'json_object' || responseFormat?.type === 'json_schema') {
+      responseMimeType = 'application/json';
+      if (responseFormat.type === 'json_schema') {
+        responseSchema = responseFormat.json_schema?.schema;
+      }
+    }
+
     return {
       contents,
       systemInstruction,
@@ -116,7 +193,13 @@ export class GoogleAdapter extends BaseProviderAdapter {
         stopSequences: request.stop
           ? (Array.isArray(request.stop) ? request.stop : [request.stop])
           : undefined,
+        responseMimeType,
+        responseSchema,
       },
+      tools: functionDeclarations && functionDeclarations.length > 0
+        ? [{ functionDeclarations }]
+        : undefined,
+      toolConfig,
     };
   }
 
@@ -124,8 +207,18 @@ export class GoogleAdapter extends BaseProviderAdapter {
     const r = response as GoogleResponse;
     const candidate = r.candidates?.[0];
     const content = candidate?.content?.parts
-      ?.map(p => p.text)
+      ?.map((p) => p.text ?? '')
       ?.join('') ?? '';
+    const toolCalls = (candidate?.content?.parts ?? [])
+      .filter((part) => !!part.functionCall)
+      .map((part, index) => ({
+        id: `google-tool-${index}`,
+        type: 'function' as const,
+        function: {
+          name: part.functionCall?.name ?? 'tool',
+          arguments: JSON.stringify(part.functionCall?.args ?? {}),
+        },
+      }));
 
     return {
       id: `google-${this.unixTimestamp()}`,
@@ -136,7 +229,8 @@ export class GoogleAdapter extends BaseProviderAdapter {
         index: 0,
         message: {
           role: 'assistant',
-          content,
+          content: content.length > 0 ? content : null,
+          tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
         },
         finish_reason: this.mapFinishReason(candidate?.finishReason),
       }],
@@ -148,10 +242,11 @@ export class GoogleAdapter extends BaseProviderAdapter {
     };
   }
 
-  private mapFinishReason(reason?: string): 'stop' | 'length' | null {
+  private mapFinishReason(reason?: string): 'stop' | 'length' | 'tool_calls' | null {
     if (!reason) return null;
     if (reason === 'STOP') return 'stop';
     if (reason === 'MAX_TOKENS') return 'length';
+    if (reason.toUpperCase().includes('TOOL')) return 'tool_calls';
     return 'stop';
   }
 
@@ -160,7 +255,8 @@ export class GoogleAdapter extends BaseProviderAdapter {
     try {
       const data = JSON.parse(chunk);
       const candidate = data.candidates?.[0];
-      const text = candidate?.content?.parts?.[0]?.text;
+      const firstPart = candidate?.content?.parts?.[0];
+      const text = firstPart?.text;
       const model = this.resolveModelId(request);
 
       if (text) {
@@ -172,6 +268,29 @@ export class GoogleAdapter extends BaseProviderAdapter {
           choices: [{
             index: 0,
             delta: { content: text },
+            finish_reason: null,
+          }],
+        };
+      }
+
+      if (firstPart?.functionCall) {
+        return {
+          id: `google-${this.unixTimestamp()}`,
+          object: 'chat.completion.chunk',
+          created: this.unixTimestamp(),
+          model,
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                id: `google-tool-${this.unixTimestamp()}`,
+                type: 'function',
+                function: {
+                  name: firstPart.functionCall.name,
+                  arguments: JSON.stringify(firstPart.functionCall.args ?? {}),
+                },
+              }],
+            },
             finish_reason: null,
           }],
         };

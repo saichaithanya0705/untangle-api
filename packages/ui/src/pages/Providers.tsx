@@ -18,12 +18,18 @@ export default function Providers() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [togglingProvider, setTogglingProvider] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const loadProviders = async () => {
     setLoading(true);
     try {
-      const data = await api.getProviders();
+      const data = await api.getAllProviders();
       setProviders(data);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load providers');
     } finally {
       setLoading(false);
     }
@@ -34,21 +40,29 @@ export default function Providers() {
   }, []);
 
   const toggleProvider = async (id: string, enabled: boolean) => {
+    setError(null);
+    setNotice(null);
+    setTogglingProvider(id);
     setProviders((prev) =>
       prev.map((p) => (p.id === id ? { ...p, enabled } : p))
     );
     try {
       await api.toggleProvider(id, enabled);
+      setNotice(`Updated ${providers.find((p) => p.id === id)?.name ?? id}: ${enabled ? 'enabled' : 'disabled'}.`);
     } catch (error) {
       // Revert optimistic update on failure
       setProviders((prev) =>
         prev.map((p) => (p.id === id ? { ...p, enabled: !enabled } : p))
       );
-      console.error('Failed to toggle provider:', error);
+      setError(error instanceof Error ? error.message : 'Failed to toggle provider');
+    } finally {
+      setTogglingProvider(null);
     }
   };
 
   const refreshProvider = async (id: string) => {
+    setError(null);
+    setNotice(null);
     setRefreshing(id);
     try {
       const result = await api.refreshProviderModels(id);
@@ -65,8 +79,9 @@ export default function Providers() {
             : p
         )
       );
+      setNotice(`Refreshed ${providers.find((p) => p.id === id)?.name ?? id}: ${result.count} models (${result.source}).`);
     } catch (error) {
-      console.error('Failed to refresh provider:', error);
+      setError(error instanceof Error ? error.message : 'Failed to refresh provider');
     } finally {
       setRefreshing(null);
     }
@@ -76,6 +91,23 @@ export default function Providers() {
     if (!dateStr) return 'Never';
     const date = new Date(dateStr);
     return date.toLocaleString();
+  };
+
+  const formatSource = (source?: string) => {
+    switch (source) {
+      case 'api':
+        return 'API';
+      case 'web-search':
+        return 'Web Search';
+      case 'openrouter':
+        return 'OpenRouter';
+      case 'none':
+      case undefined:
+      case null:
+        return 'Not Discovered';
+      default:
+        return source;
+    }
   };
 
   if (loading) {
@@ -94,10 +126,10 @@ export default function Providers() {
         <Card>
           <CardContent className="py-8 text-center">
             <p className="text-muted-foreground mb-4">
-              No providers configured. Add API keys to enable providers.
+              No providers available.
             </p>
             <p className="text-sm text-muted-foreground">
-              Set environment variables like OPENAI_API_KEY or ANTHROPIC_API_KEY
+              Configure providers in your server config and restart.
             </p>
           </CardContent>
         </Card>
@@ -108,12 +140,28 @@ export default function Providers() {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">Providers</h1>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {notice && (
+        <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+          {notice}
+        </div>
+      )}
+
       <Card>
         <CardHeader>
-          <CardTitle>Configured Providers</CardTitle>
+          <CardTitle>All Providers</CardTitle>
         </CardHeader>
         <CardContent>
-          <Table>
+          <p className="mb-4 text-sm text-muted-foreground">
+            Providers without API keys can still discover public model metadata via web search.
+          </p>
+          <Table className="min-w-[760px]">
             <TableHeader>
               <TableRow>
                 <TableHead>Provider</TableHead>
@@ -127,13 +175,13 @@ export default function Providers() {
             </TableHeader>
             <TableBody>
               {providers.map((provider) => (
-                <TableRow key={provider.id}>
+                <TableRow key={provider.id} className={provider.enabled ? '' : 'opacity-80'}>
                   <TableCell className="font-medium">{provider.name}</TableCell>
                   <TableCell>
                     <Badge variant="secondary">{provider.modelCount}</Badge>
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline">{provider.source || 'api'}</Badge>
+                    <Badge variant="outline">{formatSource(provider.source)}</Badge>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {formatDate(provider.lastRefreshed)}
@@ -148,6 +196,8 @@ export default function Providers() {
                   <TableCell>
                     <Switch
                       checked={provider.enabled}
+                      aria-label={`Enable provider ${provider.name}`}
+                      disabled={togglingProvider === provider.id}
                       onCheckedChange={(checked) => toggleProvider(provider.id, checked)}
                     />
                   </TableCell>
@@ -156,13 +206,13 @@ export default function Providers() {
                       variant="outline"
                       size="sm"
                       onClick={() => refreshProvider(provider.id)}
-                      disabled={refreshing === provider.id}
+                      disabled={refreshing === provider.id || togglingProvider === provider.id}
                     >
                       <RefreshCw
                         size={16}
                         className={refreshing === provider.id ? 'animate-spin' : ''}
                       />
-                      <span className="ml-2">Refresh</span>
+                      <span className="ml-2">{provider.hasKey ? 'Refresh' : 'Discover'}</span>
                     </Button>
                   </TableCell>
                 </TableRow>

@@ -11,16 +11,36 @@ export default function Models() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const providers = Array.from(new Set(models.map((m) => m.providerId)));
+  const providerMeta = Array.from(
+    models.reduce((acc, model) => {
+      const existing = acc.get(model.providerId);
+      if (!existing) {
+        acc.set(model.providerId, {
+          id: model.providerId,
+          name: model.providerName,
+          enabled: model.providerEnabled ?? true,
+        });
+        return acc;
+      }
+      if (model.providerEnabled === false) {
+        existing.enabled = false;
+      }
+      return acc;
+    }, new Map<string, { id: string; name: string; enabled: boolean }>())
+      .values()
+  );
 
   const loadModels = async () => {
     setLoading(true);
     try {
       const data = await api.getFullModels();
       setModels(data);
+      setError(null);
     } catch (error) {
-      console.error('Failed to load models:', error);
+      setError(error instanceof Error ? error.message : 'Failed to load models');
     } finally {
       setLoading(false);
     }
@@ -32,6 +52,8 @@ export default function Models() {
 
   const handleToggle = async (model: FullModel, enabled: boolean) => {
     try {
+      setError(null);
+      setNotice(null);
       await api.toggleModel(model.providerId, model.id, enabled);
       setModels((prev) =>
         prev.map((m) =>
@@ -40,19 +62,23 @@ export default function Models() {
             : m
         )
       );
+      setNotice(`${enabled ? 'Enabled' : 'Disabled'} ${model.id}.`);
     } catch (error) {
-      console.error('Failed to toggle model:', error);
+      setError(error instanceof Error ? error.message : 'Failed to toggle model');
     }
   };
 
   const handleRefreshPricing = async () => {
     setRefreshing(true);
     try {
+      setError(null);
+      setNotice(null);
       await api.refreshOpenRouterModels();
       await api.refreshPricing();
       await loadModels();
+      setNotice('Pricing and model metadata refreshed.');
     } catch (error) {
-      console.error('Failed to refresh pricing:', error);
+      setError(error instanceof Error ? error.message : 'Failed to refresh pricing');
     } finally {
       setRefreshing(false);
     }
@@ -62,7 +88,10 @@ export default function Models() {
     ? models.filter((m) => m.providerId === selectedProvider)
     : models;
 
-  const enabledCount = filteredModels.filter((m) => m.enabled).length;
+  const enabledCount = filteredModels.filter(
+    (m) => m.enabled && (m.providerEnabled ?? true)
+  ).length;
+  const selectedProviderMeta = providerMeta.find((provider) => provider.id === selectedProvider);
 
   return (
     <div>
@@ -81,6 +110,18 @@ export default function Models() {
         </div>
       </div>
 
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {notice && (
+        <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+          {notice}
+        </div>
+      )}
+
       {/* Info about auto-discovery */}
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
         <div className="flex items-start gap-3">
@@ -89,7 +130,8 @@ export default function Models() {
             <h3 className="font-medium text-blue-800">Automatic Model Discovery</h3>
             <p className="text-sm text-blue-700 mt-1">
               Models are automatically discovered when you add an API key for a provider.
-              Pricing data is fetched from OpenRouter for accurate cost tracking.
+              Cost source order is: OpenRouter catalog first, then provider API/docs, then web-search fallback.
+              If no source resolves, pricing remains unknown and is shown as &ldquo;-&rdquo;.
             </p>
           </div>
         </div>
@@ -104,34 +146,45 @@ export default function Models() {
         >
           All Providers
           <Badge variant="secondary" className="ml-2">
-            {models.length}
+            {models.filter((m) => (m.providerEnabled ?? true) && m.enabled).length}/{models.length}
           </Badge>
         </Button>
-        {providers.map((providerId) => {
-          const count = models.filter((m) => m.providerId === providerId).length;
+        {providerMeta.map((provider) => {
+          const count = models.filter((m) => m.providerId === provider.id).length;
           const providerEnabled = models.filter(
-            (m) => m.providerId === providerId && m.enabled
+            (m) => m.providerId === provider.id && m.enabled && (m.providerEnabled ?? true)
           ).length;
           return (
             <Button
-              key={providerId}
-              variant={selectedProvider === providerId ? 'default' : 'outline'}
+              key={provider.id}
+              variant={selectedProvider === provider.id ? 'default' : 'outline'}
               size="sm"
-              onClick={() => setSelectedProvider(providerId)}
+              onClick={() => setSelectedProvider(provider.id)}
             >
-              {providerId}
+              {provider.name}
               <Badge variant="secondary" className="ml-2">
                 {providerEnabled}/{count}
               </Badge>
+              {!provider.enabled && (
+                <Badge variant="secondary" className="ml-1">
+                  off
+                </Badge>
+              )}
             </Button>
           );
         })}
       </div>
 
+      {selectedProviderMeta && !selectedProviderMeta.enabled && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {selectedProviderMeta.name} is disabled in Providers. Enable it to route traffic to these models.
+        </div>
+      )}
+
       {/* Current Models */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+          <CardTitle className="flex flex-wrap items-center gap-2">
             {selectedProvider ? `${selectedProvider} Models` : 'All Models'}
             <Badge variant="outline">
               {enabledCount} enabled / {filteredModels.length} total
@@ -144,6 +197,7 @@ export default function Models() {
             onToggle={handleToggle}
             showProvider={!selectedProvider}
             loading={loading}
+            disableToggleWhenProviderDisabled
           />
         </CardContent>
       </Card>

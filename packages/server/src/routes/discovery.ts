@@ -1,14 +1,22 @@
 import { Hono } from 'hono';
-import type { ProviderRegistry, ModelConfig } from '@untangle-ai/core';
+import type { ProviderRegistry, ModelConfig, ApiCompatibilityConfig } from '@untangle-ai/core';
 import { modelDiscovery, type DiscoveredModel } from '@untangle-ai/core';
+import { findUnknownFields, resolveApiCompatibility } from './compatibility.js';
 
 interface DiscoveryContext {
   registry: ProviderRegistry;
   getApiKey: (providerId: string) => Promise<string | undefined>;
+  apiCompatibility?: ApiCompatibilityConfig;
 }
+
+const MODEL_TOGGLE_ALLOWED_FIELDS = new Set(['enabled']);
+const MODEL_TOGGLE_GENERIC_ALLOWED_FIELDS = new Set(['modelId', 'enabled']);
+const MODEL_ADD_ALLOWED_FIELDS = new Set(['models']);
+const PROVIDER_TOGGLE_ALLOWED_FIELDS = new Set(['enabled']);
 
 export function createDiscoveryRoutes(ctx: DiscoveryContext) {
   const app = new Hono();
+  const compatibility = resolveApiCompatibility(ctx.apiCompatibility);
 
   /**
    * Discover models for a specific provider using intelligent fallback
@@ -206,6 +214,19 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
     const providerId = c.req.param('providerId');
     const modelId = decodeURIComponent(c.req.param('modelId'));
     const body = await c.req.json().catch(() => null) as { enabled?: boolean } | null;
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+      const unknownFields = findUnknownFields(
+        body as Record<string, unknown>,
+        MODEL_TOGGLE_ALLOWED_FIELDS,
+        compatibility,
+      );
+      if (unknownFields.length > 0) {
+        return c.json({
+          error: `Unknown request fields: ${unknownFields.join(', ')}`,
+          code: 'unknown_fields',
+        }, 400);
+      }
+    }
     if (!body || typeof body.enabled !== 'boolean') {
       return c.json({ error: 'enabled must be a boolean' }, 400);
     }
@@ -229,6 +250,19 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
   app.post('/api/models/:providerId/toggle', async (c) => {
     const providerId = c.req.param('providerId');
     const body = await c.req.json().catch(() => null) as { modelId?: string; enabled?: boolean } | null;
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+      const unknownFields = findUnknownFields(
+        body as Record<string, unknown>,
+        MODEL_TOGGLE_GENERIC_ALLOWED_FIELDS,
+        compatibility,
+      );
+      if (unknownFields.length > 0) {
+        return c.json({
+          error: `Unknown request fields: ${unknownFields.join(', ')}`,
+          code: 'unknown_fields',
+        }, 400);
+      }
+    }
     if (!body || typeof body.modelId !== 'string' || typeof body.enabled !== 'boolean') {
       return c.json({ error: 'Expected { modelId: string, enabled: boolean }' }, 400);
     }
@@ -252,6 +286,19 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
   app.post('/api/models/:providerId/add', async (c) => {
     const providerId = c.req.param('providerId');
     const body = await c.req.json().catch(() => null) as { models?: DiscoveredModel[] } | null;
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+      const unknownFields = findUnknownFields(
+        body as Record<string, unknown>,
+        MODEL_ADD_ALLOWED_FIELDS,
+        compatibility,
+      );
+      if (unknownFields.length > 0) {
+        return c.json({
+          error: `Unknown request fields: ${unknownFields.join(', ')}`,
+          code: 'unknown_fields',
+        }, 400);
+      }
+    }
     if (!body || !Array.isArray(body.models)) {
       return c.json({ error: 'models must be an array' }, 400);
     }
@@ -276,7 +323,10 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
    * Get full model list with all details (for UI)
    */
   app.get('/api/models/full', (c) => {
-    const models = ctx.registry.listModels();
+    const models = ctx.registry.listModels({
+      includeDisabledProviders: true,
+      includeDisabledModels: true,
+    });
 
     return c.json({
       models: models.map(({ model, provider }) => ({
@@ -284,6 +334,7 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
         alias: model.alias,
         providerId: provider.id,
         providerName: provider.name,
+        providerEnabled: provider.enabled,
         contextWindow: model.contextWindow,
         maxOutputTokens: model.maxOutputTokens,
         inputPricePer1M: model.inputPricePer1M,
@@ -355,6 +406,19 @@ export function createDiscoveryRoutes(ctx: DiscoveryContext) {
   app.post('/api/providers/:providerId/toggle', async (c) => {
     const providerId = c.req.param('providerId');
     const body = await c.req.json().catch(() => null) as { enabled?: boolean } | null;
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+      const unknownFields = findUnknownFields(
+        body as Record<string, unknown>,
+        PROVIDER_TOGGLE_ALLOWED_FIELDS,
+        compatibility,
+      );
+      if (unknownFields.length > 0) {
+        return c.json({
+          error: `Unknown request fields: ${unknownFields.join(', ')}`,
+          code: 'unknown_fields',
+        }, 400);
+      }
+    }
     if (!body || typeof body.enabled !== 'boolean') {
       return c.json({ error: 'enabled must be a boolean' }, 400);
     }

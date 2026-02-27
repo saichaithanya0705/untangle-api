@@ -1,0 +1,50 @@
+{
+  "request": {
+    "model": "gpt-4o",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hello"
+      }
+    ],
+    "temperature": 0.3,
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "ping",
+          "description": "Ping tool",
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto",
+    "response_format": {
+      "type": "json_object"
+    }
+  },
+  "response": {
+    "id": "chatcmpl-test",
+    "object": "chat.completion",
+    "created": 1234567890,
+    "model": "gpt-4o",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "ok"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 3,
+      "completion_tokens": 1,
+      "total_tokens": 4
+    }
+  }
+}

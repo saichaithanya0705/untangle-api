@@ -19,3 +19,56 @@ providers:
     #     enabled: true
     #   - id: gpt-3.5-turbo
     #     enabled: false
+
+# Optional deployment-group routing and fallback policy
+# routing:
+#   groups:
+#     - alias: gpt-prod
+#       strategy: priority # priority | weighted | shuffle | least-latency
+#       cooldownMs: 5000
+#       retryPolicy:
+#         maxAttempts: 3
+#         retryableStatusCodes: [408, 409, 429, 500, 502, 503, 504]
+#       circuitBreaker:
+#         failureThreshold: 3
+#         resetTimeoutMs: 30000
+#       streamFallbackPolicy:
+#         mode: continue-disabled # continue-disabled | continue-with-policy-prompt
+#         policyPrompt: "Continue from the interruption point without repeating prior text."
+#       deployments:
+#         - provider: openai
+#           model: gpt-4o
+#           priority: 0
+#         - provider: openrouter
+#           model: openai/gpt-4o
+#           priority: 1
+
+# Optional control-plane foundation (Phase 1 Workstream C)
+# controlPlane:
+#   enabled: true
+#   virtualKeyHeader: x-untangle-key
+#   postgres:
+#     enabled: true
+#     connectionString: postgresql://postgres:postgres@localhost:5432/untangle
+#     schema: public
+#   redis:
+#     enabled: true
+#     connectionString: redis://localhost:6379
+#     keyPrefix: untangle
+
+# Optional richer observability controls (Phase 1 Workstream D)
+# observability:
+#   logging:
+#     level: info # debug | info | warn | error
+#   tracing:
+#     enabled: true
+#     sampleRate: 1.0 # 0.0 - 1.0
+#     logSpans: true
+#   metrics:
+#     providerLabels: true
+
+# Optional request compatibility controls (Phase 1 Workstream A)
+# api:
+#   compatibility:
+#     strictValidation: false
+#     normalizeLegacyParams: true

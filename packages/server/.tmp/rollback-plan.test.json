@@ -1,0 +1,19 @@
+{
+  "generatedAt": "2026-02-27T10:37:50.708Z",
+  "branch": "main",
+  "commit": "569eb14616b68ae6b83ba9ca400303f3d8716679",
+  "strategy": "safe-revert",
+  "checkpoints": [
+    "Confirm canary regression signal and freeze rollout traffic.",
+    "Revert rollout commit(s) without force push.",
+    "Redeploy last known-good build.",
+    "Run post-rollback smoke checks (/health, /metrics, /api/settings)."
+  ],
+  "commands": [
+    "git checkout main",
+    "# Revert specific rollout commits (newest first):",
+    "# git revert <commit_sha>",
+    "pnpm run build",
+    "pnpm --filter untangle-ai start -- --host 127.0.0.1 --port 4010 --ui"
+  ]
+}

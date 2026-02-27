@@ -1,50 +1,111 @@
 import { Hono } from 'hono';
-import { usageTracker, pricingFetcher } from '@untangle-ai/core';
+import { usageTracker, pricingFetcher, type ControlPlaneService, type ApiCompatibilityConfig } from '@untangle-ai/core';
+import { findUnknownFields, resolveApiCompatibility } from './compatibility.js';
 
-export function createUsageRoutes() {
+interface UsageRoutesContext {
+  controlPlane?: ControlPlaneService;
+  apiCompatibility?: ApiCompatibilityConfig;
+}
+
+export function createUsageRoutes(ctx: UsageRoutesContext = {}) {
   const app = new Hono();
+  const compatibility = resolveApiCompatibility(ctx.apiCompatibility);
 
   // Get usage summary
-  app.get('/api/usage', (c) => {
+  app.get('/api/usage', async (c) => {
     const period = c.req.query('period') || 'today';
 
     let summary;
     switch (period) {
       case 'hour':
-        summary = usageTracker.getRecentUsage(60);
+        if (ctx.controlPlane) {
+          summary = await ctx.controlPlane.getUsageSummary({
+            startDate: new Date(Date.now() - (60 * 60 * 1000)),
+          });
+        } else {
+          summary = usageTracker.getRecentUsage(60);
+        }
         break;
       case 'day':
       case 'today':
-        summary = usageTracker.getTodayUsage();
+        if (ctx.controlPlane) {
+          const dayStart = new Date();
+          dayStart.setHours(0, 0, 0, 0);
+          summary = await ctx.controlPlane.getUsageSummary({ startDate: dayStart });
+        } else {
+          summary = usageTracker.getTodayUsage();
+        }
         break;
       case 'all':
-        summary = usageTracker.getSummary();
+        summary = ctx.controlPlane
+          ? await ctx.controlPlane.getUsageSummary()
+          : usageTracker.getSummary();
         break;
       default:
         // Parse as minutes
         const minutes = parseInt(period, 10);
         if (!isNaN(minutes)) {
-          summary = usageTracker.getRecentUsage(minutes);
+          if (ctx.controlPlane) {
+            summary = await ctx.controlPlane.getUsageSummary({
+              startDate: new Date(Date.now() - (minutes * 60 * 1000)),
+            });
+          } else {
+            summary = usageTracker.getRecentUsage(minutes);
+          }
         } else {
-          summary = usageTracker.getTodayUsage();
+          if (ctx.controlPlane) {
+            const dayStart = new Date();
+            dayStart.setHours(0, 0, 0, 0);
+            summary = await ctx.controlPlane.getUsageSummary({ startDate: dayStart });
+          } else {
+            summary = usageTracker.getTodayUsage();
+          }
         }
     }
 
     return c.json(summary);
   });
 
+  app.get('/api/usage/reconciliation', async (c) => {
+    if (!ctx.controlPlane) {
+      return c.json({
+        error: 'Billing reconciliation requires control-plane persistence.',
+        code: 'control_plane_required',
+      }, 501);
+    }
+
+    const toleranceRaw = c.req.query('toleranceUsd');
+    const parsedTolerance = toleranceRaw === undefined ? undefined : Number(toleranceRaw);
+    if (toleranceRaw !== undefined && !Number.isFinite(parsedTolerance)) {
+      return c.json({
+        error: 'toleranceUsd must be a finite number when provided',
+        code: 'invalid_query',
+      }, 400);
+    }
+
+    const summary = await ctx.controlPlane.getBillingReconciliation({
+      toleranceUsd: parsedTolerance,
+    });
+    return c.json(summary);
+  });
+
   // Get recent usage records
-  app.get('/api/usage/records', (c) => {
+  app.get('/api/usage/records', async (c) => {
     const rawLimit = parseInt(c.req.query('limit') || '100', 10);
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 1000) : 100;
     const providerId = c.req.query('provider');
     const modelId = c.req.query('model');
 
-    const records = usageTracker.getRecords({
-      limit,
-      providerId: providerId || undefined,
-      modelId: modelId || undefined,
-    });
+    const records = ctx.controlPlane
+      ? await ctx.controlPlane.listUsageEvents({
+          providerId: providerId || undefined,
+          modelId: modelId || undefined,
+        }, limit)
+      : usageTracker.getRecords({
+          limit,
+          providerId: providerId || undefined,
+          modelId: modelId || undefined,
+        });
 
     return c.json({ records });
   });
@@ -90,6 +151,19 @@ export function createUsageRoutes() {
       inputTokens: number;
       outputTokens: number;
     } | null;
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+      const unknownFields = findUnknownFields(
+        body as Record<string, unknown>,
+        new Set(['provider', 'model', 'inputTokens', 'outputTokens']),
+        compatibility,
+      );
+      if (unknownFields.length > 0) {
+        return c.json(
+          { error: `Unknown request fields: ${unknownFields.join(', ')}`, code: 'unknown_fields' },
+          400
+        );
+      }
+    }
     if (
       !body ||
       typeof body.provider !== 'string' ||
@@ -122,6 +196,9 @@ export function createUsageRoutes() {
   // Clear usage records
   app.delete('/api/usage', (c) => {
     usageTracker.clearRecords();
+    if (ctx.controlPlane) {
+      void ctx.controlPlane.clearUsageEvents();
+    }
     return c.json({ message: 'Usage records cleared' });
   });
 

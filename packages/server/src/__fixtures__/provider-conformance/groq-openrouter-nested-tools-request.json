@@ -1,0 +1,114 @@
+{
+  "request": {
+    "model": "llama-3.3-70b-versatile",
+    "messages": [
+      {
+        "role": "system",
+        "content": "Use tools when needed and keep answers concise."
+      },
+      {
+        "role": "user",
+        "content": "Find weather and traffic for San Francisco."
+      }
+    ],
+    "temperature": 0.1,
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "plan_trip",
+          "description": "Build trip planning details.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "location": { "type": "string" },
+              "constraints": {
+                "type": "object",
+                "properties": {
+                  "units": {
+                    "type": "string",
+                    "enum": ["metric", "imperial"]
+                  },
+                  "avoid": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                },
+                "required": ["units"]
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": { "type": "string" },
+                    "enabled": { "type": "boolean" }
+                  },
+                  "required": ["kind", "enabled"]
+                }
+              }
+            },
+            "required": ["location", "constraints"]
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto"
+  },
+  "expected": {
+    "model": "llama-3.3-70b-versatile",
+    "messages": [
+      {
+        "role": "system",
+        "content": "Use tools when needed and keep answers concise."
+      },
+      {
+        "role": "user",
+        "content": "Find weather and traffic for San Francisco."
+      }
+    ],
+    "temperature": 0.1,
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "plan_trip",
+          "description": "Build trip planning details.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "location": { "type": "string" },
+              "constraints": {
+                "type": "object",
+                "properties": {
+                  "units": {
+                    "type": "string",
+                    "enum": ["metric", "imperial"]
+                  },
+                  "avoid": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                },
+                "required": ["units"]
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": { "type": "string" },
+                    "enabled": { "type": "boolean" }
+                  },
+                  "required": ["kind", "enabled"]
+                }
+              }
+            },
+            "required": ["location", "constraints"]
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto"
+  }
+}

@@ -18,6 +18,13 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
+    "test:phase2": "pnpm run test:chaos && pnpm run test:load-profile && pnpm run test:retry-stream && pnpm run test:billing-reconciliation && pnpm run test:release-safety && pnpm run test:soak",
+    "test:chaos": "vitest run src/__tests__/chaos-resilience.test.ts",
+    "test:load-profile": "vitest run src/__tests__/load-profile.test.ts",
+    "test:retry-stream": "vitest run src/__tests__/chat-routing.test.ts src/__tests__/responses.test.ts",
+    "test:billing-reconciliation": "vitest run src/__tests__/billing-reconciliation.test.ts",
+    "test:release-safety": "vitest run src/__tests__/release-safety.test.ts",
+    "test:soak": "vitest run src/__tests__/soak-memory.test.ts",
     "test:watch": "vitest",
     "clean": "rimraf dist"
   },

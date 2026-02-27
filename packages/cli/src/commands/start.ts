@@ -13,6 +13,8 @@ import {
   loadConfig,
   modelDiscovery,
   pricingFetcher,
+  usageTracker,
+  bootstrapControlPlane,
 } from '@untangle-ai/core';
 import { startServer } from '@untangle-ai/server';
 import { logger } from '../utils/logger.js';
@@ -165,6 +167,23 @@ export const startCommand = new Command('start')
       }
 
       const registry = createRegistryFromConfig(config);
+      const controlPlaneBootstrap = await bootstrapControlPlane(config.controlPlane);
+      for (const message of controlPlaneBootstrap.messages) {
+        const prefixed = `  ${message.message}`;
+        if (message.level === 'warn') {
+          logger.warn(prefixed);
+        } else if (message.level === 'success') {
+          logger.success(prefixed);
+        } else {
+          logger.dim(prefixed);
+        }
+      }
+      const controlPlane = controlPlaneBootstrap.service;
+
+      if (controlPlane) {
+        usageTracker.addListener((record) => controlPlane.recordUsageFromTracker(record));
+        logger.info('Control-plane foundation enabled.');
+      }
 
       const keyStore = new KeyStore();
       const keyCache = new Map<string, string>();
@@ -283,6 +302,7 @@ export const startCommand = new Command('start')
         getApiKey,
         setApiKey,
         removeApiKey,
+        controlPlane,
         enableUi: Boolean(options.ui),
       });
 

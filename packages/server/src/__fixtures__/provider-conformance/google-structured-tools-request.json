@@ -1,0 +1,97 @@
+{
+  "request": {
+    "model": "gemini-1.5-flash",
+    "messages": [
+      {
+        "role": "system",
+        "content": "Return JSON only."
+      },
+      {
+        "role": "user",
+        "content": "Find the weather."
+      }
+    ],
+    "max_tokens": 200,
+    "top_p": 0.8,
+    "response_format": {
+      "type": "json_schema",
+      "json_schema": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "answer": { "type": "string" }
+          },
+          "required": ["answer"]
+        }
+      }
+    },
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "lookup_weather",
+          "description": "Lookup weather by city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": { "type": "string" }
+            },
+            "required": ["city"]
+          }
+        }
+      }
+    ],
+    "tool_choice": {
+      "type": "function",
+      "function": {
+        "name": "lookup_weather"
+      }
+    }
+  },
+  "expected": {
+    "systemInstruction": {
+      "parts": [{ "text": "Return JSON only." }]
+    },
+    "contents": [
+      {
+        "role": "user",
+        "parts": [{ "text": "Find the weather." }]
+      }
+    ],
+    "generationConfig": {
+      "maxOutputTokens": 200,
+      "topP": 0.8,
+      "responseMimeType": "application/json",
+      "responseSchema": {
+        "type": "object",
+        "properties": {
+          "answer": { "type": "string" }
+        },
+        "required": ["answer"]
+      }
+    },
+    "tools": [
+      {
+        "functionDeclarations": [
+          {
+            "name": "lookup_weather",
+            "description": "Lookup weather by city.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": { "type": "string" }
+              },
+              "required": ["city"]
+            }
+          }
+        ]
+      }
+    ],
+    "toolConfig": {
+      "functionCallingConfig": {
+        "mode": "ANY",
+        "allowedFunctionNames": ["lookup_weather"]
+      }
+    }
+  }
+}

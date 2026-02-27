@@ -1,0 +1,78 @@
+{
+  "response": {
+    "id": "chatcmpl-mixed-001",
+    "object": "chat.completion",
+    "created": 1730000000,
+    "model": "llama-3.3-70b-versatile",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": [
+            { "type": "output_text", "text": "Weather is clear." },
+            {
+              "type": "image_url",
+              "image_url": { "url": "https://example.com/radar.png" }
+            },
+            { "type": "output_text", "text": "Traffic is moderate." }
+          ],
+          "tool_calls": [
+            {
+              "id": "call_trip_1",
+              "type": "function",
+              "function": {
+                "name": "plan_trip",
+                "arguments": "{\"location\":\"San Francisco\",\"mode\":\"driving\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 101,
+      "completion_tokens": 29,
+      "total_tokens": 130
+    }
+  },
+  "expected": {
+    "id": "chatcmpl-mixed-001",
+    "object": "chat.completion",
+    "created": 1730000000,
+    "model": "llama-3.3-70b-versatile",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": [
+            { "type": "output_text", "text": "Weather is clear." },
+            {
+              "type": "image_url",
+              "image_url": { "url": "https://example.com/radar.png" }
+            },
+            { "type": "output_text", "text": "Traffic is moderate." }
+          ],
+          "tool_calls": [
+            {
+              "id": "call_trip_1",
+              "type": "function",
+              "function": {
+                "name": "plan_trip",
+                "arguments": "{\"location\":\"San Francisco\",\"mode\":\"driving\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 101,
+      "completion_tokens": 29,
+      "total_tokens": 130
+    }
+  }
+}

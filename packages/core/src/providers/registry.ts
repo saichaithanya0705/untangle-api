@@ -23,15 +23,39 @@ export class ProviderRegistry implements IProviderRegistry {
 
   /**
    * Update models for a provider (for dynamic model discovery)
+   * Merges by id/alias and preserves existing models that are not in the update set.
    */
   updateModels(providerId: string, models: ModelConfig[]): boolean {
     const adapter = this.adapters.get(providerId);
-    if (adapter) {
-      // Update the config's models array
-      (adapter.config as { models: ModelConfig[] }).models = models;
-      return true;
+    if (!adapter) {
+      return false;
     }
-    return false;
+
+    const existing = (adapter.config as { models: ModelConfig[] }).models;
+
+    for (const incoming of models) {
+      const match = existing.find((current) =>
+        current.id === incoming.id
+        || current.alias === incoming.id
+        || (incoming.alias !== undefined
+          && (current.id === incoming.alias || current.alias === incoming.alias))
+      );
+
+      if (match) {
+        match.id = incoming.id;
+        match.alias = incoming.alias;
+        match.contextWindow = incoming.contextWindow;
+        match.maxOutputTokens = incoming.maxOutputTokens;
+        match.inputPricePer1M = incoming.inputPricePer1M;
+        match.outputPricePer1M = incoming.outputPricePer1M;
+        match.capabilities = incoming.capabilities;
+        // Preserve match.enabled so refresh does not unexpectedly re-enable disabled models.
+      } else {
+        existing.push(incoming);
+      }
+    }
+
+    return true;
   }
 
   /**
@@ -42,11 +66,17 @@ export class ProviderRegistry implements IProviderRegistry {
     if (!adapter) return false;
 
     const existing = adapter.config.models;
-    const existingIds = new Set(existing.map(m => m.id));
+    const existingIds = new Set(
+      existing.flatMap((m) => (m.alias ? [m.id, m.alias] : [m.id]))
+    );
 
     for (const model of models) {
-      if (!existingIds.has(model.id)) {
+      const candidateIds = model.alias ? [model.id, model.alias] : [model.id];
+      if (!candidateIds.some((id) => existingIds.has(id))) {
         existing.push(model);
+        for (const id of candidateIds) {
+          existingIds.add(id);
+        }
       }
     }
 
@@ -84,14 +114,18 @@ export class ProviderRegistry implements IProviderRegistry {
     return Array.from(this.adapters.values()).map(a => a.config);
   }
 
-  listModels(): Array<{ model: ModelConfig; provider: ProviderConfig }> {
+  listModels(options?: {
+    includeDisabledProviders?: boolean;
+    includeDisabledModels?: boolean;
+  }): Array<{ model: ModelConfig; provider: ProviderConfig }> {
+    const includeDisabledProviders = options?.includeDisabledProviders ?? false;
+    const includeDisabledModels = options?.includeDisabledModels ?? false;
     const result: Array<{ model: ModelConfig; provider: ProviderConfig }> = [];
     for (const adapter of this.adapters.values()) {
-      if (!adapter.config.enabled) continue;
+      if (!includeDisabledProviders && !adapter.config.enabled) continue;
       for (const model of adapter.config.models) {
-        if (model.enabled) {
-          result.push({ model, provider: adapter.config });
-        }
+        if (!includeDisabledModels && !model.enabled) continue;
+        result.push({ model, provider: adapter.config });
       }
     }
     return result;

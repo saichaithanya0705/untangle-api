@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
-import { Activity, Server, Layers, Key, DollarSign, Zap, TrendingUp, Clock } from 'lucide-react';
+import { Activity, Server, Layers, Key, DollarSign, Zap, TrendingUp } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { api, FullModel, ProviderKey } from '@/lib/api';
+import { api, FullModel, Provider, ProviderKey } from '@/lib/api';
 
 interface Stats {
-  providers: number;
+  totalProviders: number;
+  enabledProviders: number;
   models: number;
-  enabledModels: number;
+  activeModels: number;
   keysConfigured: number;
   serverStatus: 'online' | 'offline';
 }
@@ -23,59 +24,82 @@ interface UsageStats {
 
 export default function Dashboard() {
   const [stats, setStats] = useState<Stats>({
-    providers: 0,
+    totalProviders: 0,
+    enabledProviders: 0,
     models: 0,
-    enabledModels: 0,
+    activeModels: 0,
     keysConfigured: 0,
     serverStatus: 'offline',
   });
   const [usage, setUsage] = useState<UsageStats | null>(null);
   const [models, setModels] = useState<FullModel[]>([]);
   const [keys, setKeys] = useState<ProviderKey[]>([]);
+  const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [fullModels, health, usageData, keysData] = await Promise.all([
+        const [fullModels, health, usageData, keysData, providersData] = await Promise.all([
           api.getFullModels().catch(() => []),
           api.getHealth(),
           api.getUsage('today').catch(() => null),
           api.getKeys().catch(() => []),
+          api.getAllProviders().catch(() => []),
         ]);
 
-        const providers = new Set(fullModels.map((m) => m.providerId));
-        const enabledModels = fullModels.filter((m) => m.enabled).length;
-        const configuredKeys = keysData.filter((k) => k.hasKey).length;
+        const activeModels = fullModels.filter(
+          (model) => model.enabled && (model.providerEnabled ?? true)
+        ).length;
+        const configuredKeys = keysData.filter((key) => key.hasKey).length;
+        const enabledProviders = providersData.filter((provider) => provider.enabled).length;
 
         setModels(fullModels);
         setKeys(keysData);
+        setProviders(providersData);
         setUsage(usageData);
         setStats({
-          providers: providers.size,
+          totalProviders: providersData.length,
+          enabledProviders,
           models: fullModels.length,
-          enabledModels,
+          activeModels,
           keysConfigured: configuredKeys,
           serverStatus: health.status,
         });
       } catch {
-        setStats((s) => ({ ...s, serverStatus: 'offline' }));
+        setStats((previous) => ({ ...previous, serverStatus: 'offline' }));
       } finally {
         setLoading(false);
       }
     }
-    loadData();
+    void loadData();
   }, []);
 
-  // Group models by provider
   const modelsByProvider = models.reduce((acc, model) => {
     if (!acc[model.providerId]) {
-      acc[model.providerId] = { name: model.providerName, count: 0, enabled: 0 };
+      acc[model.providerId] = {
+        count: 0,
+        active: 0,
+      };
     }
     acc[model.providerId].count++;
-    if (model.enabled) acc[model.providerId].enabled++;
+    if (model.enabled && (model.providerEnabled ?? true)) {
+      acc[model.providerId].active++;
+    }
     return acc;
-  }, {} as Record<string, { name: string; count: number; enabled: number }>);
+  }, {} as Record<string, { count: number; active: number }>);
+
+  const providerRows = providers.map((provider) => {
+    const modelInfo = modelsByProvider[provider.id] ?? { count: 0, active: 0 };
+    return {
+      id: provider.id,
+      name: provider.name,
+      providerEnabled: provider.enabled,
+      modelCount: modelInfo.count,
+      activeModelCount: modelInfo.active,
+      hasKey: keys.find((key) => key.id === provider.id)?.hasKey ?? false,
+    };
+  });
 
   const summaryCards = [
     {
@@ -84,16 +108,40 @@ export default function Dashboard() {
       value: stats.serverStatus,
       color: stats.serverStatus === 'online' ? 'text-green-500' : 'text-red-500',
     },
-    { icon: Activity, label: 'Providers', value: stats.providers, color: 'text-blue-500' },
-    { icon: Layers, label: 'Models', value: `${stats.enabledModels}/${stats.models}`, color: 'text-purple-500' },
+    {
+      icon: Activity,
+      label: 'Providers',
+      value: `${stats.enabledProviders}/${stats.totalProviders}`,
+      color: 'text-blue-500',
+    },
+    {
+      icon: Layers,
+      label: 'Models',
+      value: `${stats.activeModels}/${stats.models}`,
+      color: 'text-purple-500',
+    },
     { icon: Key, label: 'API Keys', value: stats.keysConfigured, color: 'text-yellow-500' },
   ];
 
-  const usageCards = usage ? [
-    { icon: Zap, label: 'Requests Today', value: usage.totalRequests, subtext: `${usage.successfulRequests} success`, color: 'text-blue-500' },
-    { icon: TrendingUp, label: 'Tokens Used', value: formatNumber(usage.totalInputTokens + usage.totalOutputTokens), subtext: `${formatNumber(usage.totalInputTokens)} in / ${formatNumber(usage.totalOutputTokens)} out`, color: 'text-green-500' },
-    { icon: DollarSign, label: 'Cost Today', value: formatCost(usage.totalCost), color: 'text-yellow-500' },
-  ] : [];
+  const usageCards = usage
+    ? [
+        {
+          icon: Zap,
+          label: 'Requests Today',
+          value: usage.totalRequests,
+          subtext: `${usage.successfulRequests} success`,
+          color: 'text-blue-500',
+        },
+        {
+          icon: TrendingUp,
+          label: 'Tokens Used',
+          value: formatNumber(usage.totalInputTokens + usage.totalOutputTokens),
+          subtext: `${formatNumber(usage.totalInputTokens)} in / ${formatNumber(usage.totalOutputTokens)} out`,
+          color: 'text-green-500',
+        },
+        { icon: DollarSign, label: 'Cost Today', value: formatCost(usage.totalCost), color: 'text-yellow-500' },
+      ]
+    : [];
 
   if (loading) {
     return (
@@ -107,7 +155,6 @@ export default function Dashboard() {
     <div>
       <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
 
-      {/* Summary Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {summaryCards.map(({ icon: Icon, label, value, color }) => (
           <Card key={label}>
@@ -124,7 +171,6 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Usage Stats (if available) */}
       {usage && usage.totalRequests > 0 && (
         <>
           <h2 className="text-lg font-semibold mb-4">Today's Usage</h2>
@@ -147,7 +193,6 @@ export default function Dashboard() {
         </>
       )}
 
-      {/* Providers Overview */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
@@ -155,25 +200,27 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {Object.entries(modelsByProvider).map(([id, { name, count, enabled }]) => {
-                const keyInfo = keys.find((k) => k.id === id);
-                return (
-                  <div key={id} className="flex items-center justify-between py-2 border-b last:border-0">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-2 h-2 rounded-full ${keyInfo?.hasKey ? 'bg-green-500' : 'bg-gray-300'}`} />
-                      <span className="font-medium">{name}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">{enabled}/{count} models</Badge>
-                      {keyInfo?.hasKey ? (
-                        <Badge variant="default" className="bg-green-100 text-green-800">Key Set</Badge>
-                      ) : (
-                        <Badge variant="secondary">No Key</Badge>
-                      )}
-                    </div>
+              {providerRows.map((provider) => (
+                <div key={provider.id} className="flex flex-col gap-2 py-2 border-b last:border-0 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`w-2 h-2 rounded-full ${provider.hasKey ? 'bg-green-500' : 'bg-gray-300'}`} />
+                    <span className="font-medium truncate">{provider.name}</span>
                   </div>
-                );
-              })}
+                  <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                    <Badge variant="outline">{provider.activeModelCount}/{provider.modelCount} models</Badge>
+                    {provider.providerEnabled ? (
+                      <Badge variant="default" className="bg-blue-100 text-blue-800">Enabled</Badge>
+                    ) : (
+                      <Badge variant="secondary">Disabled</Badge>
+                    )}
+                    {provider.hasKey ? (
+                      <Badge variant="default" className="bg-green-100 text-green-800">Key Set</Badge>
+                    ) : (
+                      <Badge variant="secondary">No Key</Badge>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>
@@ -184,30 +231,34 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              <div className="flex justify-between items-center">
+              <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground">Total Models</span>
                 <span className="font-bold">{stats.models}</span>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Enabled Models</span>
-                <span className="font-bold text-green-600">{stats.enabledModels}</span>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Active Models</span>
+                <span className="font-bold text-green-600">{stats.activeModels}</span>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Disabled Models</span>
-                <span className="font-bold text-gray-400">{stats.models - stats.enabledModels}</span>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Inactive Models</span>
+                <span className="font-bold text-gray-400">{stats.models - stats.activeModels}</span>
               </div>
-              <div className="flex justify-between items-center">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Enabled Providers</span>
+                <span className="font-bold">{stats.enabledProviders} / {stats.totalProviders}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground">API Keys Configured</span>
-                <span className="font-bold">{stats.keysConfigured} / {stats.providers}</span>
+                <span className="font-bold">{stats.keysConfigured} / {stats.totalProviders}</span>
               </div>
               {usage && (
                 <>
                   <hr className="my-2" />
-                  <div className="flex justify-between items-center">
+                  <div className="flex items-center justify-between gap-3">
                     <span className="text-muted-foreground">Requests Today</span>
                     <span className="font-bold">{usage.totalRequests}</span>
                   </div>
-                  <div className="flex justify-between items-center">
+                  <div className="flex items-center justify-between gap-3">
                     <span className="text-muted-foreground">Success Rate</span>
                     <span className="font-bold text-green-600">
                       {usage.totalRequests > 0

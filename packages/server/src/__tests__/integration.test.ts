@@ -64,6 +64,20 @@ describe('Integration Tests', () => {
         host: 'localhost',
       },
       providers: {},
+      routing: {
+        groups: [],
+        defaultStrategy: 'priority',
+        defaultCooldownMs: 0,
+        defaultRetryPolicy: { maxAttempts: 3, retryableStatusCodes: [408, 409, 429, 500, 502, 503, 504] },
+        defaultCircuitBreaker: { failureThreshold: 3, resetTimeoutMs: 30000 },
+        defaultStreamFallbackPolicy: undefined,
+      },
+      controlPlane: {
+        enabled: false,
+        virtualKeyHeader: 'x-untangle-key',
+        postgres: { enabled: false, schema: 'public' },
+        redis: { enabled: false, keyPrefix: 'untangle' },
+      },
     };
 
     const options: ServerOptions = {
@@ -89,6 +103,101 @@ describe('Integration Tests', () => {
 
       const body = await res.json();
       expect(body).toEqual({ status: 'ok' });
+    });
+
+    it('should attach a request id header', async () => {
+      const res = await app.request('/health');
+      expect(res.status).toBe(200);
+      expect(res.headers.get('x-request-id')).toBeTruthy();
+    });
+
+    it('should preserve caller-supplied request id header', async () => {
+      const res = await app.request('/health', {
+        headers: { 'x-request-id': 'req-test-123' },
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('x-request-id')).toBe('req-test-123');
+    });
+
+    it('should include traceparent response header', async () => {
+      const res = await app.request('/health');
+      expect(res.status).toBe(200);
+      const traceparent = res.headers.get('traceparent');
+      expect(traceparent).toBeTruthy();
+      expect(traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/);
+    });
+
+    it('should preserve incoming trace id in traceparent response', async () => {
+      const incoming = '00-11111111111111111111111111111111-2222222222222222-01';
+      const res = await app.request('/health', {
+        headers: { traceparent: incoming },
+      });
+      expect(res.status).toBe(200);
+      const outgoing = res.headers.get('traceparent');
+      expect(outgoing).toBeTruthy();
+      const outgoingTraceId = outgoing?.split('-')[1];
+      expect(outgoingTraceId).toBe('11111111111111111111111111111111');
+    });
+  });
+
+  describe('GET /metrics', () => {
+    it('should return prometheus metrics payload', async () => {
+      await app.request('/health');
+      const res = await app.request('/metrics');
+      expect(res.status).toBe(200);
+      const body = await res.text();
+      expect(body).toContain('untangle_http_requests_total');
+      expect(body).toContain('untangle_router_fallback_total');
+      expect(body).toContain('untangle_provider_requests_total');
+      expect(body).toContain('untangle_trace_requests_total');
+      expect(body).toContain('untangle_trace_sampling_drift');
+      expect(body).toContain('untangle_trace_sampling_rate_observed');
+      expect(body).toContain('untangle_trace_sampling_rate_configured');
+    });
+
+    it('should track unsampled traces and expose trace sampling drift metrics', async () => {
+      await app.request('/health', {
+        headers: {
+          traceparent: '00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-00',
+        },
+      });
+
+      const res = await app.request('/metrics');
+      expect(res.status).toBe(200);
+      const body = await res.text();
+
+      const unsampledMatch = body.match(/untangle_trace_requests_total\{sampled="false"\}\s+([0-9]+)/);
+      expect(Number(unsampledMatch?.[1] ?? '0')).toBeGreaterThan(0);
+
+      const driftMatch = body.match(/untangle_trace_sampling_drift\s+([0-9]+(?:\.[0-9]+)?)/);
+      expect(Number(driftMatch?.[1] ?? '0')).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe('Router debug endpoints', () => {
+    it('should return router health snapshot', async () => {
+      const res = await app.request('/api/router/health');
+      expect(res.status).toBe(200);
+      const body = await res.json() as {
+        status: string;
+        groups: unknown[];
+        states: unknown[];
+      };
+      expect(body.status).toBe('ok');
+      expect(Array.isArray(body.groups)).toBe(true);
+      expect(Array.isArray(body.states)).toBe(true);
+    });
+
+    it('should return model decision snapshot for direct model', async () => {
+      const res = await app.request('/api/router/decisions/test-provider-model-1');
+      expect(res.status).toBe(200);
+      const body = await res.json() as {
+        modelAlias: string;
+        deployments: Array<{ providerId: string; modelId: string }>;
+      };
+      expect(body.modelAlias).toBe('test-provider-model-1');
+      expect(body.deployments[0]?.providerId).toBe('test-provider');
+      expect(body.deployments[0]?.modelId).toBe('test-provider-model-1');
     });
   });
 
@@ -188,7 +297,7 @@ describe('Integration Tests', () => {
       expect(providersBody.providers.map(p => p.id)).toContain('disabled-provider');
     });
 
-    it('should disable provider when key is removed at runtime', async () => {
+    it('should keep provider state unchanged when key is removed at runtime', async () => {
       const delRes = await app.request('/api/keys/disabled-provider', {
         method: 'DELETE',
       });
@@ -196,7 +305,12 @@ describe('Integration Tests', () => {
 
       const providersRes = await app.request('/api/providers');
       const providersBody = await providersRes.json() as { providers: Array<{ id: string }> };
-      expect(providersBody.providers.map(p => p.id)).not.toContain('disabled-provider');
+      expect(providersBody.providers.map(p => p.id)).toContain('disabled-provider');
+
+      const keyStatusRes = await app.request('/api/keys/disabled-provider');
+      expect(keyStatusRes.status).toBe(200);
+      const keyStatus = await keyStatusRes.json() as { hasKey: boolean };
+      expect(keyStatus.hasKey).toBe(false);
     });
 
     it('should persist provider enabled state with explicit toggle endpoint', async () => {
@@ -210,6 +324,107 @@ describe('Integration Tests', () => {
       const modelsRes = await app.request('/v1/models');
       const modelsBody = await modelsRes.json() as { data: Array<{ owned_by: string }> };
       expect(modelsBody.data.some(model => model.owned_by === 'disabled-provider')).toBe(true);
+    });
+
+    it('should reject unknown key payload fields in strict mode', async () => {
+      const registry = new ProviderRegistry();
+      registry.register(createMockProvider('strict-provider'));
+      const keys = new Map<string, string>();
+
+      const strictApp = createApp({
+        registry,
+        config: {
+          server: { port: 3000, host: 'localhost' },
+          providers: {},
+          routing: {
+            groups: [],
+            defaultStrategy: 'priority',
+            defaultCooldownMs: 0,
+            defaultRetryPolicy: { maxAttempts: 3, retryableStatusCodes: [408, 409, 429, 500, 502, 503, 504] },
+            defaultCircuitBreaker: { failureThreshold: 3, resetTimeoutMs: 30000 },
+            defaultStreamFallbackPolicy: undefined,
+          },
+          controlPlane: {
+            enabled: false,
+            virtualKeyHeader: 'x-untangle-key',
+            postgres: { enabled: false, schema: 'public' },
+            redis: { enabled: false, keyPrefix: 'untangle' },
+          },
+          api: {
+            compatibility: {
+              strictValidation: true,
+              normalizeLegacyParams: true,
+            },
+          },
+        },
+        getApiKey: (providerId) => keys.get(providerId),
+        setApiKey: (providerId, apiKey) => {
+          keys.set(providerId, apiKey);
+        },
+        removeApiKey: (providerId) => {
+          keys.delete(providerId);
+        },
+      });
+
+      const response = await strictApp.request('/api/keys/strict-provider', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ apiKey: 'sk-test', unknown: true }),
+      });
+
+      expect(response.status).toBe(400);
+      const body = await response.json() as { error: { code: string } };
+      expect(body.error.code).toBe('unknown_fields');
+    });
+
+    it('should reject unknown pricing calculate payload fields in strict mode', async () => {
+      const registry = new ProviderRegistry();
+      registry.register(createMockProvider('strict-provider'));
+
+      const strictApp = createApp({
+        registry,
+        config: {
+          server: { port: 3000, host: 'localhost' },
+          providers: {},
+          routing: {
+            groups: [],
+            defaultStrategy: 'priority',
+            defaultCooldownMs: 0,
+            defaultRetryPolicy: { maxAttempts: 3, retryableStatusCodes: [408, 409, 429, 500, 502, 503, 504] },
+            defaultCircuitBreaker: { failureThreshold: 3, resetTimeoutMs: 30000 },
+            defaultStreamFallbackPolicy: undefined,
+          },
+          controlPlane: {
+            enabled: false,
+            virtualKeyHeader: 'x-untangle-key',
+            postgres: { enabled: false, schema: 'public' },
+            redis: { enabled: false, keyPrefix: 'untangle' },
+          },
+          api: {
+            compatibility: {
+              strictValidation: true,
+              normalizeLegacyParams: true,
+            },
+          },
+        },
+        getApiKey: () => 'test-key',
+      });
+
+      const response = await strictApp.request('/api/pricing/calculate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'strict-provider',
+          model: 'strict-provider-model-1',
+          inputTokens: 10,
+          outputTokens: 5,
+          unknown: true,
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      const body = await response.json() as { code: string };
+      expect(body.code).toBe('unknown_fields');
     });
   });
 });

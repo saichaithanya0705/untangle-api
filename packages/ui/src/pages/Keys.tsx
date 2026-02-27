@@ -9,6 +9,28 @@ interface ProviderKey {
   hasKey: boolean;
 }
 
+function validateApiKey(providerId: string, rawKey: string): string | null {
+  const key = rawKey.trim();
+  if (!key) return 'API key is required.';
+  if (key.includes(' ')) return 'API key cannot contain spaces.';
+  if (key.length < 20) return 'API key appears too short.';
+
+  const rules: Record<string, { prefix: string; example: string }> = {
+    openai: { prefix: 'sk-', example: 'sk-...' },
+    anthropic: { prefix: 'sk-ant-', example: 'sk-ant-...' },
+    google: { prefix: 'AIza', example: 'AIza...' },
+    groq: { prefix: 'gsk_', example: 'gsk_...' },
+    openrouter: { prefix: 'sk-or-', example: 'sk-or-...' },
+  };
+
+  const rule = rules[providerId];
+  if (!rule) return null;
+  if (!key.startsWith(rule.prefix)) {
+    return `Expected ${providerId} key to start with "${rule.prefix}" (${rule.example}).`;
+  }
+  return null;
+}
+
 export default function Keys() {
   const [providers, setProviders] = useState<ProviderKey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -21,6 +43,10 @@ export default function Keys() {
   const [testResult, setTestResult] = useState<{ provider: string; success: boolean; message: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [discovering, setDiscovering] = useState<string | null>(null);
+  const normalizedApiKey = apiKeyInput.trim();
+  const keyValidationError = selectedProvider
+    ? validateApiKey(selectedProvider, normalizedApiKey)
+    : null;
 
   const fetchKeys = async () => {
     try {
@@ -39,11 +65,11 @@ export default function Keys() {
   }, []);
 
   const handleAddKey = async () => {
-    if (!selectedProvider || !apiKeyInput.trim()) return;
+    if (!selectedProvider || !normalizedApiKey || keyValidationError) return;
 
     setSaving(true);
     try {
-      await api.setKey(selectedProvider, apiKeyInput);
+      await api.setKey(selectedProvider, normalizedApiKey);
 
       // Automatically discover models for this provider
       setDiscovering(selectedProvider);
@@ -202,7 +228,8 @@ export default function Keys() {
       )}
 
       <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
+        <div className="overflow-x-auto">
+          <table className="min-w-[720px] divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
@@ -284,7 +311,8 @@ export default function Keys() {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       <div className="mt-6 p-4 bg-gray-50 rounded-lg">
@@ -332,9 +360,13 @@ untangle-ai start`}
                 onChange={(e) => setApiKeyInput(e.target.value)}
                 placeholder="sk-..."
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                autoComplete="off"
               />
+              {keyValidationError && (
+                <p className="text-xs text-red-600 mt-1">{keyValidationError}</p>
+              )}
               <p className="text-xs text-gray-500 mt-1">
-                The key will be stored in memory for this session only.
+                The key is stored in the local encrypted key store when runtime key management is enabled.
                 Models will be automatically discovered from the provider.
               </p>
             </div>
@@ -349,7 +381,7 @@ untangle-ai start`}
               </button>
               <button
                 onClick={handleAddKey}
-                disabled={saving || discovering === selectedProvider || !apiKeyInput.trim()}
+                disabled={saving || discovering === selectedProvider || !normalizedApiKey || !!keyValidationError}
                 className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >
                 {(saving || discovering === selectedProvider) && <Loader2 className="animate-spin" size={14} />}
