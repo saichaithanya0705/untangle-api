@@ -199,6 +199,43 @@ describe('Integration Tests', () => {
       expect(body.deployments[0]?.providerId).toBe('test-provider');
       expect(body.deployments[0]?.modelId).toBe('test-provider-model-1');
     });
+
+    it('should support region ejection admin endpoints', async () => {
+      const listBefore = await app.request('/api/router/regions');
+      expect(listBefore.status).toBe(200);
+
+      const eject = await app.request('/api/router/regions/us-east-1/eject', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reason: 'integration-drill' }),
+      });
+      expect(eject.status).toBe(200);
+
+      const listAfterEject = await app.request('/api/router/regions');
+      expect(listAfterEject.status).toBe(200);
+      const ejectedBody = await listAfterEject.json() as {
+        regions: Array<{ region: string; ejected: boolean; reason?: string }>;
+      };
+      const usEast = ejectedBody.regions.find((entry) => entry.region === 'us-east-1');
+      expect(usEast?.ejected).toBe(true);
+      expect(usEast?.reason).toBe('integration-drill');
+
+      const restore = await app.request('/api/router/regions/us-east-1/restore', {
+        method: 'POST',
+      });
+      expect(restore.status).toBe(200);
+
+      const listAfterRestore = await app.request('/api/router/regions');
+      const restoredBody = await listAfterRestore.json() as {
+        regions: Array<{ region: string; ejected: boolean }>;
+      };
+      const restoredEntry = restoredBody.regions.find((entry) => entry.region === 'us-east-1');
+      if (restoredEntry) {
+        expect(restoredEntry.ejected).toBe(false);
+      } else {
+        expect(restoredEntry).toBeUndefined();
+      }
+    });
   });
 
   describe('GET /v1/models', () => {

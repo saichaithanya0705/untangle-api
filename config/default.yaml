@@ -10,6 +10,7 @@ providers:
     enabled: true
     # API key can be set here or via OPENAI_API_KEY env var
     # apiKey: sk-...
+    # apiKeySecretRef: env:OPENAI_API_KEY
 
     # Optionally customize which models are enabled
     # models:
@@ -22,6 +23,16 @@ providers:
 
 # Optional deployment-group routing and fallback policy
 # routing:
+#   regionRouting:
+#     enabled: true
+#     homeRegion: us-east-1
+#     defaultClientRegion: us-east-1
+#     failoverRegions: [us-west-2, eu-west-1]
+#     allowCrossRegionFallback: true
+#     failureEjection:
+#       enabled: true
+#       failureThreshold: 5
+#       cooldownMs: 30000
 #   groups:
 #     - alias: gpt-prod
 #       strategy: priority # priority | weighted | shuffle | least-latency
@@ -38,10 +49,22 @@ providers:
 #       deployments:
 #         - provider: openai
 #           model: gpt-4o
+#           region: us-east-1
+#           lane: stable # stable | canary | shadow
 #           priority: 0
 #         - provider: openrouter
 #           model: openai/gpt-4o
+#           region: us-west-2
+#           lane: canary
 #           priority: 1
+#       rollout:
+#         mode: ab # disabled | canary | ab
+#         canaryPercent: 20
+#         includeStableFallback: true
+#         shadow:
+#           enabled: true
+#           samplePercent: 10
+#           maxDeployments: 1
 
 # Optional control-plane foundation (Phase 1 Workstream C)
 # controlPlane:
@@ -72,3 +95,53 @@ providers:
 #   compatibility:
 #     strictValidation: false
 #     normalizeLegacyParams: true
+
+# Optional exact response cache (Phase 3)
+# cache:
+#   exact:
+#     enabled: true
+#     ttlMs: 30000
+#     maxEntries: 1000
+#     chat: true
+#     responses: true
+
+# Optional traffic shaping (Phase 3)
+# trafficShaping:
+#   enabled: true
+#   requestsPerSecond: 100
+#   burst: 200
+#   adaptive:
+#     enabled: true
+#     minRps: 10
+#     maxRps: 300
+#     targetLatencyMs: 750
+#     errorRateThreshold: 0.05
+#     decreaseFactor: 0.8
+#     increaseStep: 2
+#     adjustIntervalMs: 2000
+
+# Optional secret-reference resolution (Phase 3)
+# secrets:
+#   enabled: true
+#   allowFileRefs: false # set true to allow provider apiKeySecretRef: file:...
+#   baseDir: .
+
+# Optional admin-plane security hardening (Phase 3)
+# security:
+#   requireAdminAuthForApi: true
+#   adminApiKeySecretRef: env:UNTANGLE_ADMIN_API_KEY
+#   adminHeader: x-untangle-admin-key
+#   allowBearerToken: true
+#   requireDataPlaneAuth: true
+#   dataPlaneHeader: x-untangle-key
+#   corsAllowedOrigins: []
+#   corsAllowCredentials: false
+#   maxBodyBytes: 1048576
+#   maxMultipartBytes: 10485760
+#   requireContentLength: true
+#   protectMetrics: true
+#   hsts:
+#     enabled: false
+#     maxAgeSeconds: 15552000
+#     includeSubDomains: true
+#     preload: false

@@ -1,6 +1,6 @@
 # Untangle-AI Execution Plan
 
-Last updated: February 26, 2026
+Last updated: March 1, 2026
 
 This file is the persistent implementation plan.  
 The full strategic roadmap is in [ROADMAP.md](./ROADMAP.md).
@@ -56,16 +56,16 @@ Exit criteria:
 
 ### Phase 3: Self-Hosted Advanced Features
 
-Status: `not started`
+Status: `in progress` (started on March 1, 2026)
 
 Milestones:
 
-1. Multi-region active-active routing and failover controls
-2. Advanced cache layers (semantic + exact) with per-policy controls
-3. Traffic shaping (quotas, bursts, adaptive throttling)
-4. Rollout controls (canary, A/B, shadow traffic)
-5. Secrets manager integrations and stronger security posture
-6. API-first admin operations and infra-as-code integration path
+1. Multi-region active-active routing and failover controls - `in progress` (added region-aware deployment metadata, region routing policy surface, request-region hint routing, and regression coverage on March 1, 2026)
+2. Advanced cache layers (semantic + exact) with per-policy controls - `in progress` (added exact-response cache baseline with per-route policy controls for chat/responses on March 1, 2026)
+3. Traffic shaping (quotas, bursts, adaptive throttling) - `in progress` (added data-plane token-bucket shaping with adaptive RPS controls, throttle metrics, and regression coverage on March 1, 2026)
+4. Rollout controls (canary, A/B, shadow traffic) - `done` (added rollout lanes/modes, deterministic rollout-key selection, and non-stream shadow mirroring for chat/responses on March 1, 2026)
+5. Secrets manager integrations and stronger security posture - `in progress` (added provider secret-reference resolution (`env:`/`file:`) and admin-plane auth middleware baseline on March 1, 2026)
+6. API-first admin operations and infra-as-code integration path - `in progress` (added admin IaC export/plan/apply endpoints for provider/model/region state management on March 1, 2026)
 
 Exit criteria:
 
@@ -142,6 +142,25 @@ Status: `phase 1 completed`
 8. Added release safety automation artifacts: migration dry-run checker (`scripts/check-control-plane-migration.js`), rollback plan generator (`scripts/generate-rollback-plan.js`), and aggregate release-safety runner (`scripts/release-safety-check.js`).
 9. Hardened provider-export reconciliation endpoint for mixed-build runtime compatibility by adding a safe fallback path when `reconcileProviderBillingExport` is unavailable at runtime.
 10. Fixed Phase 2 validation regressions (`release-safety` test repo-root path and soak metrics typing/fallback stability) and revalidated full hardening gate (`pnpm run validate:phase2` green).
+
+### March 1, 2026
+
+1. Started Phase 3 implementation and moved Phase 3 status to `in progress`.
+2. Added region-aware routing configuration surface (`routing.regionRouting`) and per-deployment region metadata for active-active selection controls.
+3. Extended router selection/debug APIs to accept request context (client region and cross-region fallback behavior).
+4. Wired request region hints (`x-untangle-region`, `x-region`) into chat/responses/embeddings/media route deployment selection.
+5. Added regression coverage for same-region preference, local-only selection mode, and header-driven regional route selection.
+6. Added explicit regional failover controls with router admin endpoints for region ejection/restore and region state inspection (`/api/router/regions/*`).
+7. Added health-based regional ejection support (`routing.regionRouting.failureEjection`) with automatic temporary ejection after repeated regional failures.
+8. Added regression coverage for manual ejection/restore behavior and auto regional ejection fallback behavior.
+9. Added exact-response caching baseline (`cache.exact`) with TTL/max-entry policy controls and non-stream cache hit/miss behavior for `chat` and `responses` routes.
+10. Added regression coverage for exact-cache hit/miss behavior in chat/responses route suites.
+11. Added data-plane traffic-shaping middleware (`trafficShaping`) with burst controls and adaptive throttling adjustments based on observed latency/error pressure.
+12. Added traffic-shaping observability metrics (`untangle_traffic_shaping_throttled_total`, `untangle_traffic_shaping_current_rps`) and regression tests for throttle and adaptive downscale behavior.
+13. Completed rollout-controls baseline with deployment lanes (`stable`/`canary`/`shadow`), per-group rollout policy (`disabled`/`canary`/`ab`), deterministic rollout-key support, and shadow mirroring for non-stream chat/responses traffic.
+14. Added security hardening baseline with configurable admin-plane authentication middleware for `/api/*` routes (`x-untangle-admin-key` and optional bearer token), plus admin-auth denial metrics.
+15. Added API-first admin IaC endpoints (`/api/admin/iac/export`, `/api/admin/iac/plan`, `/api/admin/iac/apply`) for declarative provider/model state and regional ejection management workflows.
+16. Added Phase 3 regression coverage for rollout determinism, shadow traffic mirroring, admin auth enforcement, and IaC export/plan/apply behavior; validation green (`core build`, `server build`, targeted Phase 3 test suite).
 
 ## Tracking
 

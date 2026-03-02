@@ -24,14 +24,22 @@ export type {
 export { BaseProviderAdapter } from './providers/base.js';
 export { ProviderRegistry, defaultRegistry, registerDefaultProviders, createDefaultRegistry } from './providers/registry.js';
 export { OpenAIAdapter, openaiAdapter } from './providers/openai.js';
+export { ChatGPTAdapter, chatgptAdapter } from './providers/chatgpt.js';
 export { AnthropicAdapter, anthropicAdapter } from './providers/anthropic.js';
 export { GoogleAdapter, googleAdapter } from './providers/google.js';
 export { GroqAdapter, groqAdapter } from './providers/groq.js';
 export { OpenRouterAdapter, openrouterAdapter } from './providers/openrouter.js';
+export {
+  getChatGPTAuthSession,
+  getChatGPTAuthToken,
+  resolveCodexAuthPath,
+  resolveCodexOriginator,
+} from './providers/chatgpt-auth.js';
 
 // Config
 export {
   ConfigSchema,
+  SecurityConfigSchema,
   type Config,
   type ServerConfig,
   type CustomProviderConfig,
@@ -50,6 +58,12 @@ export {
   type ObservabilityConfig,
   type ApiCompatibilityConfig,
   type ApiConfig,
+  type ExactCacheConfig,
+  type CacheConfig,
+  type AdaptiveTrafficShapingConfig,
+  type TrafficShapingConfig,
+  type SecretsConfig,
+  type SecurityConfig,
 } from './config/schema.js';
 export { loadConfig, parseConfig } from './config/loader.js';
 
@@ -57,13 +71,18 @@ export { loadConfig, parseConfig } from './config/loader.js';
 export {
   DeploymentRouter,
   type RoutingStrategy,
+  type DeploymentLane,
+  type RolloutMode,
   type StreamFallbackMode,
+  type RegionRoutingConfig,
   type ResolvedDeployment,
   type DeploymentSelection,
+  type DeploymentSelectionContext,
   type DeploymentFailure,
   type DeploymentRuntimeState,
   type SelectionDebugDeployment,
   type SelectionDebugSnapshot,
+  type RegionEjectionInfo,
 } from './routing/index.js';
 
 // Encryption

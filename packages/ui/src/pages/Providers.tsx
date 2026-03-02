@@ -187,11 +187,16 @@ export default function Providers() {
                     {formatDate(provider.lastRefreshed)}
                   </TableCell>
                   <TableCell>
-                    {provider.hasKey ? (
-                      <CheckCircle className="text-green-500" size={20} />
-                    ) : (
-                      <XCircle className="text-muted-foreground" size={20} />
-                    )}
+                    <div className="flex items-center gap-2">
+                      {provider.hasKey ? (
+                        <CheckCircle className="text-green-500" size={20} aria-hidden />
+                      ) : (
+                        <XCircle className="text-muted-foreground" size={20} aria-hidden />
+                      )}
+                      <span className="text-sm">
+                        {provider.hasKey ? 'Key Set' : 'No Key'}
+                      </span>
+                    </div>
                   </TableCell>
                   <TableCell>
                     <Switch

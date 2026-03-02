@@ -31,10 +31,9 @@ if (existsSync(uiDist)) {
 }
 
 console.log('\n✓ Build complete!');
-console.log('\nTo publish to npm:');
-console.log('  cd packages/core && npm publish --access public');
-console.log('  cd packages/server && npm publish --access public');
+console.log('\nTo publish to npm (CLI only):');
 console.log('  cd packages/cli && npm publish');
+console.log('  (prepublishOnly runs `pnpm -w run release` to bundle UI assets)');
 console.log('\nOr test locally:');
 console.log('  cd packages/cli && npm pack');
 console.log('  npm install -g untangle-ai-0.1.0.tgz');

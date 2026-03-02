@@ -5,12 +5,14 @@ import type {
   DeploymentRouter,
   ControlPlaneService,
   ApiCompatibilityConfig,
+  RoutingConfig,
 } from '@untangle-ai/core';
 import { usageTracker } from '@untangle-ai/core';
 import { observabilityMetrics } from '../observability/metrics.js';
 import { tracedFetch } from '../observability/tracing.js';
 import { enforceVirtualKeyGate, estimateTextTokens } from './virtual-key.js';
 import { findUnknownFields, normalizeEmbeddingsBody } from './compatibility.js';
+import { resolveDeploymentSelectionContext } from './region-routing.js';
 
 interface EmbeddingsContext {
   registry: ProviderRegistry;
@@ -18,7 +20,9 @@ interface EmbeddingsContext {
   router: DeploymentRouter;
   controlPlane?: ControlPlaneService;
   virtualKeyHeader?: string;
+  requireVirtualKey?: boolean;
   apiCompatibility?: ApiCompatibilityConfig;
+  routingConfig?: RoutingConfig;
 }
 
 const EMBEDDINGS_ALLOWED_FIELDS = new Set<string>([
@@ -177,7 +181,8 @@ export function createEmbeddingsRoutes(ctx: EmbeddingsContext) {
     const usageMetadata = virtualKeyGate.virtualKeyId
       ? { virtualKeyId: virtualKeyGate.virtualKeyId }
       : undefined;
-    const selection = deploymentRouter.selectDeployments(body.model, ctx.registry);
+    const selectionContext = resolveDeploymentSelectionContext(c, ctx.routingConfig);
+    const selection = deploymentRouter.selectDeployments(body.model, ctx.registry, selectionContext);
     if (selection.deployments.length === 0) {
       return c.json<OpenAIError>({
         error: { message: `Model not found: ${body.model}`, type: 'invalid_request_error', code: 'model_not_found' },

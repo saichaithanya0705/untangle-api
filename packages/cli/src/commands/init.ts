@@ -16,6 +16,20 @@ providers:
     #     enabled: true
     #   - id: gpt-4o-mini
     #     enabled: true
+
+security:
+  requireAdminAuthForApi: true
+  adminApiKeySecretRef: env:UNTANGLE_ADMIN_API_KEY
+  adminHeader: x-untangle-admin-key
+  allowBearerToken: true
+  requireDataPlaneAuth: true
+  dataPlaneHeader: x-untangle-key
+  corsAllowedOrigins: []
+  corsAllowCredentials: false
+  maxBodyBytes: 1048576
+  maxMultipartBytes: 10485760
+  requireContentLength: true
+  protectMetrics: true
 `;
 
 export const initCommand = new Command('init')

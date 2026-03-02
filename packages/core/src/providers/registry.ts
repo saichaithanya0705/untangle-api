@@ -133,6 +133,7 @@ export class ProviderRegistry implements IProviderRegistry {
 }
 
 import { OpenAIAdapter } from './openai.js';
+import { ChatGPTAdapter } from './chatgpt.js';
 import { AnthropicAdapter } from './anthropic.js';
 import { GoogleAdapter } from './google.js';
 import { GroqAdapter } from './groq.js';
@@ -141,6 +142,7 @@ import { CustomProviderAdapter, type CustomProviderDefinition } from '../templat
 
 export function registerDefaultProviders(registry: ProviderRegistry): ProviderRegistry {
   registry.register(new OpenAIAdapter());
+  registry.register(new ChatGPTAdapter());
   registry.register(new AnthropicAdapter());
   registry.register(new GoogleAdapter());
   registry.register(new GroqAdapter());

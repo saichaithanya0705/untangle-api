@@ -9,6 +9,7 @@ import {
   DeploymentRouter,
   type ProviderRegistry,
   type Config,
+  SecurityConfigSchema,
 } from '@untangle-ai/core';
 import { createChatRoutes } from './routes/chat.js';
 import { createEmbeddingsRoutes } from './routes/embeddings.js';
@@ -20,9 +21,16 @@ import { createControlPlaneRoutes } from './routes/control-plane.js';
 import { createKeysRoutes } from './routes/keys.js';
 import { createUsageRoutes } from './routes/usage.js';
 import { createDiscoveryRoutes } from './routes/discovery.js';
+import { createAdminOpsRoutes } from './routes/admin-ops.js';
 import { loggingMiddleware } from './middleware/logging.js';
+import { adminAuthMiddleware } from './middleware/admin-auth.js';
+import { trafficShapingMiddleware } from './middleware/traffic-shaping.js';
+import { dataPlaneAuthMiddleware } from './middleware/data-plane-auth.js';
+import { bodyLimitMiddleware } from './middleware/body-limit.js';
+import { securityHeadersMiddleware } from './middleware/security-headers.js';
 import { observabilityMetrics } from './observability/metrics.js';
 import { setObservabilitySettings } from './observability/settings.js';
+import { ExactResponseCache } from './cache/exact-cache.js';
 
 function findUiDistPath(): string | null {
   const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -61,16 +69,44 @@ export function createApp(options: ServerOptions) {
   const { registry, getApiKey, setApiKey, removeApiKey, enableUi } = options;
   setObservabilitySettings(options.config.observability);
   const router = new DeploymentRouter(options.config.routing);
+  const exactCache = new ExactResponseCache(options.config.cache?.exact);
+  const securityConfig = SecurityConfigSchema.parse(options.config.security ?? {});
   const controlPlane = options.controlPlane
     ?? (options.config.controlPlane.enabled ? new ControlPlaneService() : undefined);
   const virtualKeyHeader = options.config.controlPlane.virtualKeyHeader;
+  const dataPlaneHeader = securityConfig.dataPlaneHeader ?? virtualKeyHeader;
   const apiCompatibility = options.config.api?.compatibility;
+  const requireVirtualKey = securityConfig.requireDataPlaneAuth;
 
   const app = new Hono();
 
   // Middleware
-  app.use('*', cors());
+  const allowedOrigins = securityConfig.corsAllowedOrigins ?? [];
+  const allowCredentials = securityConfig.corsAllowCredentials ?? false;
+  const allowAllOrigins = allowedOrigins.includes('*');
+  const corsOptions = allowedOrigins.length > 0
+    ? {
+        origin: (origin: string | undefined) => (
+          allowAllOrigins ? '*' : (origin && allowedOrigins.includes(origin) ? origin : undefined)
+        ),
+        credentials: allowCredentials && !allowAllOrigins,
+      }
+    : {
+        origin: (_origin: string | undefined) => undefined,
+        credentials: false,
+      };
+
+  app.use('*', securityHeadersMiddleware(securityConfig));
+  app.use('*', cors(corsOptions));
   app.use('*', loggingMiddleware());
+  app.use('*', adminAuthMiddleware(securityConfig));
+  app.use('*', dataPlaneAuthMiddleware({
+    controlPlane,
+    security: securityConfig,
+    virtualKeyHeader: dataPlaneHeader,
+  }));
+  app.use('*', bodyLimitMiddleware(securityConfig));
+  app.use('*', trafficShapingMiddleware(options.config.trafficShaping));
 
   // Health check
   app.get('/health', (c) => c.json({ status: 'ok' }));
@@ -92,10 +128,48 @@ export function createApp(options: ServerOptions) {
   }));
 
   // Mount routes
-  app.route('/', createChatRoutes({ registry, getApiKey, router, controlPlane, virtualKeyHeader, apiCompatibility }));
-  app.route('/', createEmbeddingsRoutes({ registry, getApiKey, router, controlPlane, virtualKeyHeader, apiCompatibility }));
-  app.route('/', createResponsesRoutes({ registry, getApiKey, router, controlPlane, virtualKeyHeader, apiCompatibility }));
-  app.route('/', createMediaRoutes({ registry, getApiKey, router, controlPlane, virtualKeyHeader, apiCompatibility }));
+  app.route('/', createChatRoutes({
+    registry,
+    getApiKey,
+    router,
+    controlPlane,
+    virtualKeyHeader: dataPlaneHeader,
+    requireVirtualKey,
+    apiCompatibility,
+    routingConfig: options.config.routing,
+    exactCache,
+  }));
+  app.route('/', createEmbeddingsRoutes({
+    registry,
+    getApiKey,
+    router,
+    controlPlane,
+    virtualKeyHeader: dataPlaneHeader,
+    requireVirtualKey,
+    apiCompatibility,
+    routingConfig: options.config.routing,
+  }));
+  app.route('/', createResponsesRoutes({
+    registry,
+    getApiKey,
+    router,
+    controlPlane,
+    virtualKeyHeader: dataPlaneHeader,
+    requireVirtualKey,
+    apiCompatibility,
+    routingConfig: options.config.routing,
+    exactCache,
+  }));
+  app.route('/', createMediaRoutes({
+    registry,
+    getApiKey,
+    router,
+    controlPlane,
+    virtualKeyHeader: dataPlaneHeader,
+    requireVirtualKey,
+    apiCompatibility,
+    routingConfig: options.config.routing,
+  }));
   app.route('/', createRouterDebugRoutes({ registry, router }));
   if (controlPlane) {
     app.route('/', createControlPlaneRoutes({ controlPlane, apiCompatibility }));
@@ -108,6 +182,7 @@ export function createApp(options: ServerOptions) {
     getApiKey: async (id) => getApiKey(id),
     apiCompatibility,
   }));
+  app.route('/', createAdminOpsRoutes({ registry, router }));
 
   // UI serving
   if (enableUi) {
@@ -183,5 +258,7 @@ export { createControlPlaneRoutes } from './routes/control-plane.js';
 export { createKeysRoutes } from './routes/keys.js';
 export { createUsageRoutes } from './routes/usage.js';
 export { createDiscoveryRoutes } from './routes/discovery.js';
+export { createAdminOpsRoutes } from './routes/admin-ops.js';
 export { loggingMiddleware } from './middleware/logging.js';
+export { adminAuthMiddleware } from './middleware/admin-auth.js';
 export { observabilityMetrics } from './observability/metrics.js';

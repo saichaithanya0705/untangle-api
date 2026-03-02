@@ -49,7 +49,7 @@ const plan = {
     '# Revert specific rollout commits (newest first):',
     '# git revert <commit_sha>',
     'pnpm run build',
-    'pnpm --filter untangle-ai start -- --host 127.0.0.1 --port 4010 --ui',
+    'pnpm --filter untangle-ai start -- --host 127.0.0.1 --port 4010',
   ],
 };
 

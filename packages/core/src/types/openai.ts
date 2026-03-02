@@ -25,6 +25,7 @@ export interface OpenAIRequest {
   stop?: string | string[];
   tools?: OpenAITool[];
   tool_choice?: 'none' | 'auto' | { type: 'function'; function: { name: string } };
+  reasoning_effort?: 'low' | 'medium' | 'high';
 }
 
 export interface OpenAITool {

@@ -20,6 +20,9 @@ export class ObservabilityMetrics {
   private providerErrors = new Map<string, number>();
   private fallbackCount = 0;
   private rateLimitHits = new Map<string, number>();
+  private trafficShapingThrottles = new Map<string, number>();
+  private trafficShapingCurrentRps = 0;
+  private adminAuthDenials = new Map<string, number>();
   private sampledTraceRequests = 0;
   private unsampledTraceRequests = 0;
 
@@ -72,6 +75,23 @@ export class ObservabilityMetrics {
     const key = reason.trim().length > 0 ? reason : 'unknown';
     const current = this.rateLimitHits.get(key) ?? 0;
     this.rateLimitHits.set(key, current + 1);
+  }
+
+  recordTrafficShapingThrottle(reason: string): void {
+    const key = reason.trim().length > 0 ? reason : 'unknown';
+    const current = this.trafficShapingThrottles.get(key) ?? 0;
+    this.trafficShapingThrottles.set(key, current + 1);
+  }
+
+  setTrafficShapingCurrentRps(value: number): void {
+    if (!Number.isFinite(value) || value < 0) return;
+    this.trafficShapingCurrentRps = value;
+  }
+
+  recordAdminAuthDenied(reason: string): void {
+    const key = reason.trim().length > 0 ? reason : 'unknown';
+    const current = this.adminAuthDenials.get(key) ?? 0;
+    this.adminAuthDenials.set(key, current + 1);
   }
 
   recordTraceDecision(sampled: boolean): void {
@@ -146,6 +166,22 @@ export class ObservabilityMetrics {
     lines.push('# TYPE untangle_rate_limit_hits_total counter');
     for (const [reason, count] of this.rateLimitHits.entries()) {
       lines.push(`untangle_rate_limit_hits_total{reason="${escapeLabel(reason)}"} ${count}`);
+    }
+
+    lines.push('# HELP untangle_traffic_shaping_throttled_total Total requests denied by traffic shaping.');
+    lines.push('# TYPE untangle_traffic_shaping_throttled_total counter');
+    for (const [reason, count] of this.trafficShapingThrottles.entries()) {
+      lines.push(`untangle_traffic_shaping_throttled_total{reason="${escapeLabel(reason)}"} ${count}`);
+    }
+
+    lines.push('# HELP untangle_traffic_shaping_current_rps Current adaptive traffic shaping request-per-second cap.');
+    lines.push('# TYPE untangle_traffic_shaping_current_rps gauge');
+    lines.push(`untangle_traffic_shaping_current_rps ${this.trafficShapingCurrentRps}`);
+
+    lines.push('# HELP untangle_admin_auth_denied_total Total denied admin-plane API requests.');
+    lines.push('# TYPE untangle_admin_auth_denied_total counter');
+    for (const [reason, count] of this.adminAuthDenials.entries()) {
+      lines.push(`untangle_admin_auth_denied_total{reason="${escapeLabel(reason)}"} ${count}`);
     }
 
     lines.push('# HELP untangle_trace_requests_total Total requests by trace sampling decision.');

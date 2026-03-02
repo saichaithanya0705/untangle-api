@@ -63,7 +63,7 @@ function createMockProvider(id: string, models: string[]): ProviderAdapter {
   };
 }
 
-function createRoutingApp(config: any) {
+function createRoutingApp(config: any, overrides?: { cache?: Config['cache'] }) {
   const registry = new ProviderRegistry();
   registry.register(createMockProvider('primary', ['primary-model']));
   registry.register(createMockProvider('secondary', ['secondary-model']));
@@ -73,12 +73,13 @@ function createRoutingApp(config: any) {
     ['secondary', 'secondary-key'],
   ]);
 
-  const options: ServerOptions = {
+  const appOptions: ServerOptions = {
     registry,
     config: {
       server: { port: 3000, host: 'localhost' },
       providers: {},
       routing: config,
+      cache: overrides?.cache,
       controlPlane: {
         enabled: false,
         virtualKeyHeader: 'x-untangle-key',
@@ -89,7 +90,7 @@ function createRoutingApp(config: any) {
     getApiKey: (providerId) => runtimeKeys.get(providerId),
   };
 
-  return createApp(options);
+  return createApp(appOptions);
 }
 
 describe('DeploymentRouter', () => {
@@ -184,6 +185,154 @@ describe('DeploymentRouter', () => {
     const overridden = router.selectDeployments('overrides-default', registry).deployments[0];
     expect(overridden?.streamFallbackPolicy.mode).toBe('continue-disabled');
     expect(overridden?.streamFallbackPolicy.policyPrompt).toBe('Group override prompt.');
+  });
+
+  it('prefers same-region deployment when region routing is enabled', () => {
+    const registry = new ProviderRegistry();
+    registry.register(createMockProvider('primary', ['primary-model']));
+    registry.register(createMockProvider('secondary', ['secondary-model']));
+
+    const router = new DeploymentRouter({
+      regionRouting: {
+        enabled: true,
+        homeRegion: 'us-east-1',
+        failoverRegions: ['us-west-2'],
+        allowCrossRegionFallback: true,
+      },
+      groups: [{
+        alias: 'prod',
+        strategy: 'priority',
+        deployments: [
+          { provider: 'primary', model: 'primary-model', priority: 0, region: 'us-east-1' },
+          { provider: 'secondary', model: 'secondary-model', priority: 1, region: 'us-west-2' },
+        ],
+      }],
+    });
+
+    const selection = router.selectDeployments('prod', registry, { clientRegion: 'us-west-2' });
+    expect(selection.deployments[0]?.providerId).toBe('secondary');
+    expect(selection.deployments[0]?.region).toBe('us-west-2');
+  });
+
+  it('can restrict attempts to local region when cross-region fallback is disabled', () => {
+    const registry = new ProviderRegistry();
+    registry.register(createMockProvider('primary', ['primary-model']));
+    registry.register(createMockProvider('secondary', ['secondary-model']));
+
+    const router = new DeploymentRouter({
+      regionRouting: {
+        enabled: true,
+        homeRegion: 'us-east-1',
+        failoverRegions: ['us-west-2'],
+        allowCrossRegionFallback: false,
+      },
+      groups: [{
+        alias: 'prod',
+        strategy: 'priority',
+        deployments: [
+          { provider: 'primary', model: 'primary-model', priority: 0, region: 'us-east-1' },
+          { provider: 'secondary', model: 'secondary-model', priority: 1, region: 'us-west-2' },
+        ],
+      }],
+    });
+
+    const selection = router.selectDeployments('prod', registry, { clientRegion: 'us-east-1' });
+    expect(selection.deployments).toHaveLength(1);
+    expect(selection.deployments[0]?.providerId).toBe('primary');
+    expect(selection.deployments[0]?.region).toBe('us-east-1');
+  });
+
+  it('auto-ejects unhealthy regions when failure ejection is enabled', () => {
+    const registry = new ProviderRegistry();
+    registry.register(createMockProvider('primary', ['primary-model']));
+    registry.register(createMockProvider('secondary', ['secondary-model']));
+
+    const router = new DeploymentRouter({
+      regionRouting: {
+        enabled: true,
+        homeRegion: 'us-east-1',
+        failoverRegions: ['us-west-2'],
+        allowCrossRegionFallback: true,
+        failureEjection: {
+          enabled: true,
+          failureThreshold: 1,
+          cooldownMs: 60_000,
+        },
+      },
+      groups: [{
+        alias: 'prod',
+        strategy: 'priority',
+        deployments: [
+          { provider: 'primary', model: 'primary-model', priority: 0, region: 'us-east-1' },
+          { provider: 'secondary', model: 'secondary-model', priority: 1, region: 'us-west-2' },
+        ],
+      }],
+    });
+
+    const beforeFailure = router.selectDeployments('prod', registry, { clientRegion: 'us-east-1' });
+    expect(beforeFailure.deployments[0]?.providerId).toBe('primary');
+
+    router.recordFailure(beforeFailure.deployments[0]);
+
+    const afterFailure = router.selectDeployments('prod', registry, { clientRegion: 'us-east-1' });
+    expect(afterFailure.deployments[0]?.providerId).toBe('secondary');
+  });
+
+  it('routes fully to canary lane when canary rollout is at 100%', () => {
+    const registry = new ProviderRegistry();
+    registry.register(createMockProvider('primary', ['primary-model']));
+    registry.register(createMockProvider('secondary', ['secondary-model']));
+
+    const router = new DeploymentRouter({
+      groups: [{
+        alias: 'prod',
+        strategy: 'priority',
+        rollout: {
+          mode: 'canary',
+          canaryPercent: 100,
+          includeStableFallback: false,
+        },
+        deployments: [
+          { provider: 'primary', model: 'primary-model', priority: 0, lane: 'stable' },
+          { provider: 'secondary', model: 'secondary-model', priority: 1, lane: 'canary' },
+        ],
+      }],
+    });
+
+    const selection = router.selectDeployments('prod', registry);
+    expect(selection.deployments).toHaveLength(1);
+    expect(selection.deployments[0]?.providerId).toBe('secondary');
+    expect(selection.deployments[0]?.lane).toBe('canary');
+  });
+
+  it('keeps A/B rollout deterministic for the same rollout key', () => {
+    const registry = new ProviderRegistry();
+    registry.register(createMockProvider('primary', ['primary-model']));
+    registry.register(createMockProvider('secondary', ['secondary-model']));
+
+    const router = new DeploymentRouter({
+      groups: [{
+        alias: 'prod',
+        strategy: 'priority',
+        rollout: {
+          mode: 'ab',
+          canaryPercent: 50,
+          includeStableFallback: false,
+        },
+        deployments: [
+          { provider: 'primary', model: 'primary-model', priority: 0, lane: 'stable' },
+          { provider: 'secondary', model: 'secondary-model', priority: 1, lane: 'canary' },
+        ],
+      }],
+    });
+
+    const alphaA = router.selectDeployments('prod', registry, { rolloutKey: 'alpha' });
+    const alphaB = router.selectDeployments('prod', registry, { rolloutKey: 'alpha' });
+    const beta = router.selectDeployments('prod', registry, { rolloutKey: 'beta' });
+
+    expect(alphaA.deployments[0]?.providerId).toBe(alphaB.deployments[0]?.providerId);
+    expect(alphaA.deployments[0]?.providerId).toBe('secondary');
+    expect(beta.deployments[0]?.providerId).toBe('primary');
   });
 });
 
@@ -288,6 +437,345 @@ describe('Chat Routing Fallback', () => {
     const body = await response.json() as { model: string; choices: Array<{ message: { content: string } }> };
     expect(body.model).toBe('secondary-model');
     expect(body.choices[0]?.message?.content).toBe('fallback response');
+  });
+
+  it('returns cached non-stream chat responses when exact cache is enabled', async () => {
+    const app = createRoutingApp({
+      groups: [{
+        alias: 'gpt-prod',
+        strategy: 'priority',
+        deployments: [
+          { provider: 'primary', model: 'primary-model', priority: 0 },
+        ],
+      }],
+    }, {
+      cache: {
+        exact: {
+          enabled: true,
+          ttlMs: 60_000,
+          maxEntries: 100,
+          chat: true,
+          responses: false,
+        },
+      },
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: 'chatcmpl-cache',
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model: 'primary-model',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: 'cached-value' },
+        finish_reason: 'stop',
+      }],
+      usage: {
+        prompt_tokens: 5,
+        completion_tokens: 2,
+        total_tokens: 7,
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const requestPayload = {
+      model: 'gpt-prod',
+      messages: [{ role: 'user', content: 'cache me' }],
+    };
+
+    const first = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(requestPayload),
+    });
+    expect(first.status).toBe(200);
+    expect(first.headers.get('x-untangle-cache')).toBe('miss');
+
+    const second = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(requestPayload),
+    });
+    expect(second.status).toBe(200);
+    expect(second.headers.get('x-untangle-cache')).toBe('hit');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const secondBody = await second.json() as { choices: Array<{ message: { content: string } }> };
+    expect(secondBody.choices[0]?.message?.content).toBe('cached-value');
+  });
+
+  it('mirrors successful non-stream requests to configured shadow deployments', async () => {
+    const app = createRoutingApp({
+      groups: [ {
+        alias: 'gpt-prod',
+        strategy: 'priority',
+        rollout: {
+          mode: 'disabled',
+          shadow: {
+            enabled: true,
+            samplePercent: 100,
+            maxDeployments: 1,
+          },
+        },
+        deployments: [
+          { provider: 'primary', model: 'primary-model', priority: 0, lane: 'stable' },
+          { provider: 'secondary', model: 'secondary-model', priority: 1, lane: 'shadow' },
+        ],
+      } ],
+    });
+
+    const fetchMock = vi.fn().mockImplementation((_url, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body)) as { model: string };
+      const content = payload.model === 'primary-model' ? 'primary-response' : 'shadow-response';
+      return Promise.resolve(new Response(JSON.stringify({
+        id: `chatcmpl-${payload.model}`,
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model: payload.model,
+        choices: [{
+          index: 0,
+          message: { role: 'assistant', content },
+          finish_reason: 'stop',
+        }],
+        usage: {
+          prompt_tokens: 8,
+          completion_tokens: 3,
+          total_tokens: 11,
+        },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-prod',
+        messages: [{ role: 'user', content: 'hello shadow' }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as { model: string; choices: Array<{ message: { content: string } }> };
+    expect(body.model).toBe('primary-model');
+    expect(body.choices[0]?.message?.content).toBe('primary-response');
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    const firstPayload = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as { model: string };
+    const secondPayload = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)) as { model: string };
+    expect(firstPayload.model).toBe('primary-model');
+    expect(secondPayload.model).toBe('secondary-model');
+  });
+
+  it('routes to same-region deployment when x-untangle-region is provided', async () => {
+    const app = createRoutingApp({
+      regionRouting: {
+        enabled: true,
+        homeRegion: 'us-east-1',
+        defaultClientRegion: 'us-east-1',
+        failoverRegions: ['us-west-2'],
+        allowCrossRegionFallback: true,
+      },
+      groups: [{
+        alias: 'gpt-prod',
+        strategy: 'priority',
+        deployments: [
+          { provider: 'primary', model: 'primary-model', priority: 0, region: 'us-east-1' },
+          { provider: 'secondary', model: 'secondary-model', priority: 1, region: 'us-west-2' },
+        ],
+      }],
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: 'chatcmpl-region',
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model: 'secondary-model',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: 'west-region response' },
+        finish_reason: 'stop',
+      }],
+      usage: {
+        prompt_tokens: 4,
+        completion_tokens: 3,
+        total_tokens: 7,
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-untangle-region': 'us-west-2',
+      },
+      body: JSON.stringify({
+        model: 'gpt-prod',
+        messages: [{ role: 'user', content: 'hello' }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const firstInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const firstPayload = JSON.parse(String(firstInit.body)) as { model: string };
+    expect(firstPayload.model).toBe('secondary-model');
+  });
+
+  it('uses rollout key headers for deterministic A/B routing decisions', async () => {
+    const app = createRoutingApp({
+      groups: [{
+        alias: 'gpt-prod',
+        strategy: 'priority',
+        rollout: {
+          mode: 'ab',
+          canaryPercent: 50,
+          includeStableFallback: false,
+        },
+        deployments: [
+          { provider: 'primary', model: 'primary-model', priority: 0, lane: 'stable' },
+          { provider: 'secondary', model: 'secondary-model', priority: 1, lane: 'canary' },
+        ],
+      }],
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: 'chatcmpl-rollout',
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model: 'secondary-model',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: 'ab response' },
+        finish_reason: 'stop',
+      }],
+      usage: {
+        prompt_tokens: 4,
+        completion_tokens: 3,
+        total_tokens: 7,
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-untangle-rollout-key': 'alpha',
+      },
+      body: JSON.stringify({
+        model: 'gpt-prod',
+        messages: [{ role: 'user', content: 'hello' }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const firstInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const firstPayload = JSON.parse(String(firstInit.body)) as { model: string };
+    expect(firstPayload.model).toBe('secondary-model');
+  });
+
+  it('supports manual region ejection and restore through router admin endpoints', async () => {
+    const app = createRoutingApp({
+      regionRouting: {
+        enabled: true,
+        homeRegion: 'us-east-1',
+        defaultClientRegion: 'us-east-1',
+        failoverRegions: ['us-west-2'],
+        allowCrossRegionFallback: true,
+      },
+      groups: [{
+        alias: 'gpt-prod',
+        strategy: 'priority',
+        deployments: [
+          { provider: 'primary', model: 'primary-model', priority: 0, region: 'us-east-1' },
+          { provider: 'secondary', model: 'secondary-model', priority: 1, region: 'us-west-2' },
+        ],
+      }],
+    });
+
+    const fetchMock = vi.fn().mockImplementation((_url, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { model?: string };
+      const model = body.model ?? 'unknown-model';
+      return Promise.resolve(new Response(JSON.stringify({
+        id: 'chatcmpl-region-admin',
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model,
+        choices: [{
+          index: 0,
+          message: { role: 'assistant', content: `from-${model}` },
+          finish_reason: 'stop',
+        }],
+        usage: {
+          prompt_tokens: 4,
+          completion_tokens: 2,
+          total_tokens: 6,
+        },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const eject = await app.request('/api/router/regions/us-east-1/eject', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reason: 'drill' }),
+    });
+    expect(eject.status).toBe(200);
+
+    const first = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-untangle-region': 'us-east-1',
+      },
+      body: JSON.stringify({
+        model: 'gpt-prod',
+        messages: [{ role: 'user', content: 'first' }],
+      }),
+    });
+    expect(first.status).toBe(200);
+    const firstPayload = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as { model: string };
+    expect(firstPayload.model).toBe('secondary-model');
+
+    const restore = await app.request('/api/router/regions/us-east-1/restore', {
+      method: 'POST',
+    });
+    expect(restore.status).toBe(200);
+
+    const second = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-untangle-region': 'us-east-1',
+      },
+      body: JSON.stringify({
+        model: 'gpt-prod',
+        messages: [{ role: 'user', content: 'second' }],
+      }),
+    });
+    expect(second.status).toBe(200);
+    const secondPayload = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)) as { model: string };
+    expect(secondPayload.model).toBe('primary-model');
   });
 
   it('does not continue mid-stream by default after an interrupted provider stream', async () => {
@@ -679,7 +1167,7 @@ describe('Chat Routing Fallback', () => {
             retryPolicy: { maxAttempts: 3, retryableStatusCodes: [408, 409, 429, 500, 502, 503, 504] },
             circuitBreaker: { failureThreshold: 3, resetTimeoutMs: 30000 },
             streamFallbackPolicy: undefined,
-            deployments: [{ provider: 'primary', model: 'primary-model', priority: 0, weight: 1, enabled: true }],
+            deployments: [{ provider: 'primary', model: 'primary-model', priority: 0, weight: 1, enabled: true, lane: 'stable' }],
           }],
           defaultStrategy: 'priority',
           defaultCooldownMs: 0,

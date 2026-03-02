@@ -1,6 +1,7 @@
 {
   "name": "@untangle-ai/core",
   "version": "0.1.0",
+  "private": true,
   "description": "Core types and provider adapters for untangle-ai",
   "type": "module",
   "main": "./dist/index.js",

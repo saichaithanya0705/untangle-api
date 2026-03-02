@@ -2,29 +2,38 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { api, type ServerSettings } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { api, getStoredAdminKey, setStoredAdminKey, type ServerSettings } from '@/lib/api';
 
 export default function Settings() {
   const [settings, setSettings] = useState<ServerSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [adminKey, setAdminKey] = useState(getStoredAdminKey());
+  const [adminKeyStatus, setAdminKeyStatus] = useState<string | null>(null);
 
   useEffect(() => {
-    async function loadSettings() {
-      setLoading(true);
-      try {
-        const data = await api.getSettings();
-        setSettings(data);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load settings');
-      } finally {
-        setLoading(false);
-      }
-    }
-
     void loadSettings();
   }, []);
+
+  async function loadSettings() {
+    setLoading(true);
+    try {
+      const data = await api.getSettings();
+      setSettings(data);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load settings');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSaveAdminKey() {
+    setStoredAdminKey(adminKey.trim());
+    setAdminKeyStatus(adminKey.trim() ? 'Admin key saved.' : 'Admin key cleared.');
+    await loadSettings();
+  }
 
   return (
     <div>
@@ -42,6 +51,29 @@ export default function Settings() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="grid gap-2">
+            <Label htmlFor="admin-key">Admin API Key</Label>
+            <div className="flex flex-col gap-3 max-w-xl">
+              <Input
+                id="admin-key"
+                type="password"
+                value={adminKey}
+                onChange={(event) => setAdminKey(event.target.value)}
+                placeholder="Enter admin key to access /api endpoints"
+              />
+              <div className="flex items-center gap-3">
+                <Button type="button" onClick={handleSaveAdminKey} variant="secondary" size="sm">
+                  Save Admin Key
+                </Button>
+                {adminKeyStatus && (
+                  <span className="text-sm text-gray-500">{adminKeyStatus}</span>
+                )}
+              </div>
+              <p className="text-xs text-gray-500">
+                Stored locally in this browser session to authorize admin UI calls.
+              </p>
+            </div>
+          </div>
           <div className="grid gap-2">
             <Label htmlFor="port">Port</Label>
             <Input

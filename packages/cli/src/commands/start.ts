@@ -11,6 +11,7 @@ import {
   KeyStore,
   ProviderKeyManager,
   loadConfig,
+  getChatGPTAuthSession,
   modelDiscovery,
   pricingFetcher,
   usageTracker,
@@ -19,6 +20,7 @@ import {
 import { startServer } from '@untangle-ai/server';
 import { logger } from '../utils/logger.js';
 import { resolveMasterPassword } from '../utils/master-password.js';
+import { resolveSecretReference } from '../utils/secrets.js';
 
 const ENV_VAR_OVERRIDES: Record<string, string> = {
   openai: 'OPENAI_API_KEY',
@@ -26,6 +28,7 @@ const ENV_VAR_OVERRIDES: Record<string, string> = {
   google: 'GOOGLE_API_KEY',
   groq: 'GROQ_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
+  chatgpt: 'UNTANGLE_CODEX_AUTH_TOKEN',
 };
 
 const KNOWN_CAPABILITIES: ModelCapability[] = ['chat', 'vision', 'tools', 'json_mode'];
@@ -143,7 +146,7 @@ export const startCommand = new Command('start')
   .option('-H, --host <host>', 'Host to bind to')
   .option('-c, --config <path>', 'Path to config file')
   .option('--discover', 'Discover models from provider APIs on startup')
-  .option('--ui', 'Enable the web dashboard UI')
+  .option('--no-ui', 'Disable the web dashboard UI')
   .action(async (options) => {
     logger.banner();
 
@@ -153,6 +156,22 @@ export const startCommand = new Command('start')
 
       logger.info('Loading configuration...');
       const config = loadConfig(options.config);
+      const secretsConfig = config.secrets ?? {
+        enabled: true,
+        allowFileRefs: false,
+        baseDir: '.',
+      };
+
+      if (config.security?.adminApiKeySecretRef && secretsConfig.enabled) {
+        const resolvedAdminKey = resolveSecretReference(config.security.adminApiKeySecretRef, {
+          allowFileRefs: secretsConfig.allowFileRefs,
+          baseDir: secretsConfig.baseDir,
+          env: process.env,
+        });
+        if (resolvedAdminKey) {
+          config.security.adminApiKey = resolvedAdminKey;
+        }
+      }
 
       if (options.port !== undefined) {
         const parsedPort = Number.parseInt(options.port, 10);
@@ -164,6 +183,20 @@ export const startCommand = new Command('start')
       }
       if (options.host !== undefined) {
         config.server.host = options.host;
+      }
+
+      const requireAdminAuth = config.security?.requireAdminAuthForApi ?? false;
+      const adminToken = config.security?.adminApiKey?.trim();
+      if (requireAdminAuth && (!adminToken || ['change-me', 'admin-test-token'].includes(adminToken))) {
+        logger.error('Admin auth is required but no valid adminApiKey is configured.');
+        logger.error('Set security.adminApiKey or security.adminApiKeySecretRef (env:/file:).');
+        process.exit(1);
+      }
+
+      const requireDataPlaneAuth = config.security?.requireDataPlaneAuth ?? false;
+      if (requireDataPlaneAuth && !config.controlPlane.enabled) {
+        logger.warn('Data-plane auth requires the control-plane; enabling in-memory control-plane.');
+        config.controlPlane.enabled = true;
       }
 
       const registry = createRegistryFromConfig(config);
@@ -187,20 +220,45 @@ export const startCommand = new Command('start')
 
       const keyStore = new KeyStore();
       const keyCache = new Map<string, string>();
+      const unresolvedSecretRefs = new Set<string>();
       let keyManager: ProviderKeyManager | null = null;
-      const masterPassword = resolveMasterPassword();
-
+      let masterPassword: string | null = null;
       try {
-        await keyStore.initialize(masterPassword);
-        keyManager = new ProviderKeyManager(keyStore);
-      } catch {
-        logger.warn('Encrypted key storage unavailable; runtime key management disabled.');
+        masterPassword = resolveMasterPassword();
+      } catch (error) {
+        logger.warn(`Encrypted key storage unavailable: ${error instanceof Error ? error.message : error}`);
+      }
+
+      if (masterPassword) {
+        try {
+          await keyStore.initialize(masterPassword);
+          keyManager = new ProviderKeyManager(keyStore);
+        } catch {
+          logger.warn('Encrypted key storage unavailable; runtime key management disabled.');
+        }
       }
 
       const getApiKey = async (providerId: string): Promise<string | undefined> => {
         const providerConfig = config.providers[providerId];
         if (providerConfig?.apiKey) {
           return providerConfig.apiKey;
+        }
+        if (secretsConfig.enabled && providerConfig?.apiKeySecretRef) {
+          const fromSecretRef = resolveSecretReference(providerConfig.apiKeySecretRef, {
+            allowFileRefs: secretsConfig.allowFileRefs,
+            baseDir: secretsConfig.baseDir,
+            env: process.env,
+          });
+          if (fromSecretRef) {
+            keyCache.set(providerId, fromSecretRef);
+            return fromSecretRef;
+          }
+          if (!unresolvedSecretRefs.has(providerId)) {
+            unresolvedSecretRefs.add(providerId);
+            logger.warn(
+              `Secret reference for provider "${providerId}" could not be resolved: ${providerConfig.apiKeySecretRef}`
+            );
+          }
         }
 
         if (keyCache.has(providerId)) {
@@ -219,8 +277,18 @@ export const startCommand = new Command('start')
         const envValue = process.env[envVar];
         if (envValue) {
           keyCache.set(providerId, envValue);
+          return envValue;
         }
-        return envValue;
+
+        if (providerId === 'chatgpt') {
+          const session = getChatGPTAuthSession();
+          if (session.token) {
+            keyCache.set(providerId, session.token);
+            return session.token;
+          }
+        }
+
+        return undefined;
       };
 
       if (options.discover) {
@@ -310,7 +378,7 @@ export const startCommand = new Command('start')
       if (options.ui) {
         logger.dim('Dashboard: UI enabled');
       } else {
-        logger.dim('Dashboard: disabled (use --ui to enable)');
+        logger.dim('Dashboard: disabled (use --no-ui to keep it off)');
       }
       logger.dim('Press Ctrl+C to stop');
     } catch (err) {

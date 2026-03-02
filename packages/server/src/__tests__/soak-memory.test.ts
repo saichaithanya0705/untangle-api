@@ -104,8 +104,8 @@ describe('Phase 2 soak + memory guard', () => {
               resetTimeoutMs: 30000,
             },
             deployments: [
-              { provider: 'primary', model: 'primary-model', priority: 0, enabled: true, weight: 1 },
-              { provider: 'secondary', model: 'secondary-model', priority: 1, enabled: true, weight: 1 },
+              { provider: 'primary', model: 'primary-model', priority: 0, enabled: true, weight: 1, lane: 'stable' },
+              { provider: 'secondary', model: 'secondary-model', priority: 1, enabled: true, weight: 1, lane: 'stable' },
             ],
           }],
           defaultStrategy: 'priority',

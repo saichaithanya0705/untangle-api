@@ -70,10 +70,11 @@ const modelColumn = getArg('--model-column', 'model');
 const costColumn = getArg('--cost-column', 'cost_usd');
 const timestampColumn = getArg('--timestamp-column', 'timestamp');
 const toleranceRaw = getArg('--tolerance-usd', '0.0001');
+const adminKey = getArg('--admin-key', process.env.UNTANGLE_ADMIN_KEY || '');
 const toleranceUsd = Number(toleranceRaw);
 
 if (!providerId || !csvPathArg) {
-  console.error('Usage: node scripts/reconcile-provider-billing.js --provider <providerId> --csv <path> [--server <url>] [--model-column model] [--cost-column cost_usd] [--timestamp-column timestamp] [--tolerance-usd 0.0001]');
+  console.error('Usage: node scripts/reconcile-provider-billing.js --provider <providerId> --csv <path> [--server <url>] [--model-column model] [--cost-column cost_usd] [--timestamp-column timestamp] [--tolerance-usd 0.0001] [--admin-key <token>]');
   process.exit(1);
 }
 
@@ -117,9 +118,14 @@ const records = rows.slice(1).map((line, rowOffset) => {
   };
 });
 
+const headers = { 'content-type': 'application/json' };
+if (adminKey) {
+  headers['x-untangle-admin-key'] = adminKey;
+}
+
 const response = await fetch(`${server}/api/control-plane/reconciliation/provider-export`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json' },
+  headers,
   body: JSON.stringify({
     providerId,
     toleranceUsd,

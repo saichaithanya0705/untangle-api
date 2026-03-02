@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { stream } from 'hono/streaming';
 import type {
   ProviderRegistry,
@@ -8,12 +9,16 @@ import type {
   DeploymentRouter,
   ControlPlaneService,
   ApiCompatibilityConfig,
+  RoutingConfig,
+  ResolvedDeployment,
 } from '@untangle-ai/core';
 import { usageTracker } from '@untangle-ai/core';
 import { observabilityMetrics } from '../observability/metrics.js';
 import { tracedFetch } from '../observability/tracing.js';
 import { enforceVirtualKeyGate, estimateTextTokens } from './virtual-key.js';
 import { findUnknownFields, normalizeChatBody } from './compatibility.js';
+import { resolveDeploymentSelectionContext } from './region-routing.js';
+import { ExactResponseCache, buildExactCacheKey } from '../cache/exact-cache.js';
 
 interface ChatContext {
   registry: ProviderRegistry;
@@ -21,7 +26,10 @@ interface ChatContext {
   router: DeploymentRouter;
   controlPlane?: ControlPlaneService;
   virtualKeyHeader?: string;
+  requireVirtualKey?: boolean;
   apiCompatibility?: ApiCompatibilityConfig;
+  routingConfig?: RoutingConfig;
+  exactCache?: ExactResponseCache;
 }
 
 const CHAT_ALLOWED_FIELDS = new Set<string>([
@@ -45,6 +53,7 @@ const CHAT_ALLOWED_FIELDS = new Set<string>([
   'seed',
   'parallel_tool_calls',
   'input',
+  'reasoning_effort',
 ]);
 
 function toHttpErrorStatus(status: number): 400 | 401 | 403 | 404 | 408 | 409 | 422 | 429 | 500 | 502 | 503 | 504 {
@@ -127,6 +136,67 @@ function missingApiKeyError(providerId: string): OpenAIError {
   };
 }
 
+function dispatchShadowChatTraffic(
+  c: Context,
+  routeContext: ChatContext,
+  deploymentRouter: DeploymentRouter,
+  shadowDeployments: ResolvedDeployment[],
+  baseRequest: OpenAIRequest,
+): void {
+  if (shadowDeployments.length === 0) {
+    return;
+  }
+
+  queueMicrotask(() => {
+    void Promise.allSettled(shadowDeployments.map(async (deployment, index) => {
+      const apiKey = await routeContext.getApiKey(deployment.providerId);
+      if (!apiKey) {
+        deploymentRouter.recordFailure(deployment);
+        return;
+      }
+
+      const requestForDeployment: OpenAIRequest = {
+        ...baseRequest,
+        model: deployment.modelId,
+        stream: false,
+      };
+      const providerRequest = deployment.adapter.transformRequest(requestForDeployment);
+      const endpointUrl = deployment.adapter.getEndpointUrl('chat', { request: requestForDeployment, apiKey });
+      const headers = {
+        'Content-Type': 'application/json',
+        ...deployment.adapter.getAuthHeaders(apiKey),
+      };
+
+      const attemptStart = Date.now();
+      try {
+        const response = await tracedFetch(c, endpointUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(providerRequest),
+        }, {
+          providerId: deployment.providerId,
+          modelId: deployment.modelId,
+          endpoint: 'chat.shadow',
+          attempt: index + 1,
+        });
+
+        if (!response.ok) {
+          deploymentRouter.recordFailure(deployment, {
+            retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
+          });
+          await response.arrayBuffer().catch(() => undefined);
+          return;
+        }
+
+        deploymentRouter.recordSuccess(deployment, Date.now() - attemptStart);
+        await response.arrayBuffer().catch(() => undefined);
+      } catch {
+        deploymentRouter.recordFailure(deployment);
+      }
+    }));
+  });
+}
+
 export function buildChatContinuationRequest(
   baseRequest: OpenAIRequest,
   modelId: string,
@@ -201,10 +271,26 @@ export function createChatRoutes(ctx: ChatContext) {
       if (virtualKeyGate.deniedResponse) {
         return virtualKeyGate.deniedResponse;
       }
+      const tenantId = virtualKeyGate.virtualKeyId ?? (c.get('tenantId') as string | undefined);
       usageMetadata = virtualKeyGate.virtualKeyId
         ? { virtualKeyId: virtualKeyGate.virtualKeyId }
         : undefined;
-      const selection = deploymentRouter.selectDeployments(body.model, ctx.registry);
+      const selectionContext = resolveDeploymentSelectionContext(c, ctx.routingConfig);
+      const selection = deploymentRouter.selectDeployments(body.model, ctx.registry, selectionContext);
+      const exactCacheKey = (!body.stream && ctx.exactCache?.isEnabled('chat') && tenantId)
+        ? buildExactCacheKey('chat', normalizedBody, {
+            tenantId,
+            virtualKeyId: virtualKeyGate.virtualKeyId,
+            clientRegion: selectionContext?.clientRegion,
+          })
+        : undefined;
+      if (exactCacheKey) {
+        const cached = ctx.exactCache?.get<OpenAIResponse>(exactCacheKey);
+        if (cached) {
+          c.header('x-untangle-cache', 'hit');
+          return c.json(cached);
+        }
+      }
 
       if (selection.deployments.length === 0) {
         return c.json<OpenAIError>({
@@ -526,7 +612,17 @@ export function createChatRoutes(ctx: ChatContext) {
             ?? Math.ceil((openaiResponse.choices?.[0]?.message?.content?.length ?? 0) / 4);
 
           usageTracker.recordUsage(providerId, modelId, inputTokens, outputTokens, Date.now() - startTime, true, undefined, usageMetadata);
-
+          dispatchShadowChatTraffic(
+            c,
+            ctx,
+            deploymentRouter,
+            selection.shadowDeployments,
+            { ...body, stream: false },
+          );
+          if (exactCacheKey) {
+            ctx.exactCache?.set(exactCacheKey, openaiResponse);
+            c.header('x-untangle-cache', 'miss');
+          }
           return c.json(openaiResponse);
         } catch (err) {
           deploymentRouter.recordFailure(deployment);

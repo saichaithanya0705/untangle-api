@@ -99,8 +99,8 @@ function createRoutingApp() {
             resetTimeoutMs: 30_000,
           },
           deployments: [
-            { provider: 'primary', model: 'primary-model', priority: 0, weight: 1, enabled: true },
-            { provider: 'secondary', model: 'secondary-model', priority: 1, weight: 1, enabled: true },
+            { provider: 'primary', model: 'primary-model', priority: 0, weight: 1, enabled: true, lane: 'stable' },
+            { provider: 'secondary', model: 'secondary-model', priority: 1, weight: 1, enabled: true, lane: 'stable' },
           ],
         }],
         defaultStrategy: 'priority',

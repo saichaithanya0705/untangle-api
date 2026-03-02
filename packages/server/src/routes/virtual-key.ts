@@ -1,10 +1,11 @@
 import type { Context } from 'hono';
-import type { ControlPlaneService, LimitCheckResult } from '@untangle-ai/core';
+import type { ControlPlaneService, LimitCheckResult, VirtualKeyRecord } from '@untangle-ai/core';
 import { observabilityMetrics } from '../observability/metrics.js';
 
 export interface VirtualKeyRouteContext {
   controlPlane?: ControlPlaneService;
   virtualKeyHeader?: string;
+  requireVirtualKey?: boolean;
 }
 
 export interface VirtualKeyGateResult {
@@ -54,9 +55,61 @@ export async function enforceVirtualKeyGate(
     return {};
   }
 
+  const resolvedFromContext = c.get('virtualKeyRecord') as VirtualKeyRecord | undefined;
+  if (resolvedFromContext) {
+    try {
+      const limitResult = await ctx.controlPlane.checkLimits(
+        resolvedFromContext,
+        { modelId: input.modelId, inputTokens: input.inputTokens },
+      );
+      if (limitResult.allowed) {
+        c.set('tenantId', resolvedFromContext.id);
+        return { virtualKeyId: resolvedFromContext.id };
+      }
+      const status = toLimitStatus(limitResult);
+      observabilityMetrics.recordRateLimitHit(limitResult.reason ?? 'limit_exceeded');
+      const retryAfter = toRetryAfterSeconds(limitResult.retryAfterMs);
+      const headers = retryAfter && status === 429 ? { 'Retry-After': retryAfter } : undefined;
+      return {
+        deniedResponse: c.json({
+          error: {
+            message: toLimitMessage(limitResult),
+            type: toLimitType(limitResult),
+            code: limitResult.reason ?? 'limit_exceeded',
+          },
+          retryAfterMs: limitResult.retryAfterMs,
+          keyId: resolvedFromContext.id,
+        }, status, headers),
+      };
+    } catch {
+      observabilityMetrics.recordRateLimitHit('control_plane_unavailable');
+      return {
+        deniedResponse: c.json({
+          error: {
+            message: 'Control-plane limits service is temporarily unavailable.',
+            type: 'api_error',
+            code: 'control_plane_unavailable',
+          },
+          keyId: resolvedFromContext.id,
+        }, 503),
+      };
+    }
+  }
+
   const headerName = (ctx.virtualKeyHeader ?? 'x-untangle-key').trim() || 'x-untangle-key';
   const rawKey = c.req.header(headerName)?.trim();
   if (!rawKey) {
+    if (ctx.requireVirtualKey) {
+      return {
+        deniedResponse: c.json({
+          error: {
+            message: 'Virtual key required for data-plane requests.',
+            type: 'authentication_error',
+            code: 'virtual_key_required',
+          },
+        }, 401),
+      };
+    }
     return {};
   }
 
@@ -107,6 +160,8 @@ export async function enforceVirtualKeyGate(
     };
   }
   if (limitResult.allowed) {
+    c.set('tenantId', resolved.key.id);
+    c.set('virtualKeyRecord', resolved.key);
     return { virtualKeyId: resolved.key.id };
   }
 

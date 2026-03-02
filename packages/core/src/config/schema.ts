@@ -14,9 +14,14 @@ export const CustomEndpointSchema = z.object({
   streamParser: z.enum(['sse', 'json-lines']).optional(),
 });
 
+const HttpUrlSchema = z.string().url().refine(
+  (value) => value.startsWith('http://') || value.startsWith('https://'),
+  { message: 'baseUrl must start with http:// or https://' }
+);
+
 export const CustomProviderSchema = z.object({
   enabled: z.boolean().default(true),
-  baseUrl: z.string(),
+  baseUrl: HttpUrlSchema,
   auth: z.object({
     type: z.enum(['header', 'query']).default('header'),
     header: z.string().optional(),
@@ -40,7 +45,8 @@ export const CustomProviderSchema = z.object({
 export const ProviderConfigSchema = z.object({
   enabled: z.boolean().default(true),
   apiKey: z.string().optional(),
-  baseUrl: z.string().optional(),
+  apiKeySecretRef: z.string().trim().min(1).optional(),
+  baseUrl: HttpUrlSchema.optional(),
   models: z.array(ModelConfigSchema).optional(),
 });
 
@@ -72,6 +78,21 @@ export const RoutingDeploymentSchema = z.object({
   weight: z.number().positive().default(1),
   priority: z.number().int().nonnegative().default(0),
   enabled: z.boolean().default(true),
+  region: z.string().trim().min(1).optional(),
+  lane: z.enum(['stable', 'canary', 'shadow']).optional(),
+});
+
+export const RolloutShadowConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  samplePercent: z.number().min(0).max(100).default(0),
+  maxDeployments: z.number().int().positive().default(1),
+});
+
+export const DeploymentGroupRolloutSchema = z.object({
+  mode: z.enum(['disabled', 'canary', 'ab']).default('disabled'),
+  canaryPercent: z.number().min(0).max(100).default(0),
+  includeStableFallback: z.boolean().default(true),
+  shadow: RolloutShadowConfigSchema.default({}),
 });
 
 export const DeploymentGroupSchema = z.object({
@@ -82,6 +103,7 @@ export const DeploymentGroupSchema = z.object({
   retryPolicy: RetryPolicySchema.default({}),
   circuitBreaker: CircuitBreakerSchema.default({}),
   streamFallbackPolicy: StreamFallbackPolicySchema.optional(),
+  rollout: DeploymentGroupRolloutSchema.optional(),
 });
 
 export const RoutingConfigSchema = z.object({
@@ -91,6 +113,18 @@ export const RoutingConfigSchema = z.object({
   defaultRetryPolicy: RetryPolicySchema.default({}),
   defaultCircuitBreaker: CircuitBreakerSchema.default({}),
   defaultStreamFallbackPolicy: StreamFallbackPolicySchema.optional(),
+  regionRouting: z.object({
+    enabled: z.boolean().default(false),
+    homeRegion: z.string().trim().min(1).optional(),
+    defaultClientRegion: z.string().trim().min(1).optional(),
+    failoverRegions: z.array(z.string().trim().min(1)).default([]),
+    allowCrossRegionFallback: z.boolean().default(true),
+    failureEjection: z.object({
+      enabled: z.boolean().default(false),
+      failureThreshold: z.number().int().positive().default(5),
+      cooldownMs: z.number().int().nonnegative().default(30000),
+    }).optional(),
+  }).optional(),
 });
 
 export const ControlPlanePostgresSchema = z.object({
@@ -141,6 +175,64 @@ export const ApiConfigSchema = z.object({
   compatibility: ApiCompatibilitySchema.default({}),
 });
 
+export const ExactCacheConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  ttlMs: z.number().int().positive().default(30000),
+  maxEntries: z.number().int().positive().default(1000),
+  chat: z.boolean().default(true),
+  responses: z.boolean().default(true),
+});
+
+export const CacheConfigSchema = z.object({
+  exact: ExactCacheConfigSchema.default({}),
+});
+
+export const AdaptiveTrafficShapingSchema = z.object({
+  enabled: z.boolean().default(false),
+  minRps: z.number().positive().default(1),
+  maxRps: z.number().positive().default(200),
+  targetLatencyMs: z.number().positive().default(750),
+  errorRateThreshold: z.number().min(0).max(1).default(0.05),
+  decreaseFactor: z.number().positive().max(1).default(0.8),
+  increaseStep: z.number().positive().default(1),
+  adjustIntervalMs: z.number().int().nonnegative().default(2000),
+});
+
+export const TrafficShapingConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  requestsPerSecond: z.number().positive().default(100),
+  burst: z.number().positive().default(200),
+  adaptive: AdaptiveTrafficShapingSchema.default({}),
+});
+
+export const SecretsConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  allowFileRefs: z.boolean().default(false),
+  baseDir: z.string().default('.'),
+});
+
+export const SecurityConfigSchema = z.object({
+  requireAdminAuthForApi: z.boolean().default(false),
+  adminApiKey: z.string().optional(),
+  adminApiKeySecretRef: z.string().trim().min(1).optional(),
+  adminHeader: z.string().default('x-untangle-admin-key'),
+  allowBearerToken: z.boolean().default(true),
+  requireDataPlaneAuth: z.boolean().default(true),
+  dataPlaneHeader: z.string().default('x-untangle-key'),
+  corsAllowedOrigins: z.array(z.string().trim().min(1)).default([]),
+  corsAllowCredentials: z.boolean().default(false),
+  maxBodyBytes: z.number().int().positive().default(1024 * 1024),
+  maxMultipartBytes: z.number().int().positive().default(10 * 1024 * 1024),
+  requireContentLength: z.boolean().default(true),
+  protectMetrics: z.boolean().default(true),
+  hsts: z.object({
+    enabled: z.boolean().default(false),
+    maxAgeSeconds: z.number().int().positive().default(15552000),
+    includeSubDomains: z.boolean().default(true),
+    preload: z.boolean().default(false),
+  }).default({}),
+});
+
 export const ConfigSchema = z.object({
   server: ServerConfigSchema.default({}),
   providers: z.record(z.string(), ProviderConfigSchema).default({}),
@@ -149,6 +241,10 @@ export const ConfigSchema = z.object({
   controlPlane: ControlPlaneConfigSchema.default({}),
   observability: ObservabilityConfigSchema.optional(),
   api: ApiConfigSchema.optional(),
+  cache: CacheConfigSchema.optional(),
+  trafficShaping: TrafficShapingConfigSchema.optional(),
+  secrets: SecretsConfigSchema.optional(),
+  security: SecurityConfigSchema.optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -161,6 +257,7 @@ export type StreamFallbackPolicyConfig = z.infer<typeof StreamFallbackPolicySche
 export type RoutingDeploymentConfig = z.infer<typeof RoutingDeploymentSchema>;
 export type DeploymentGroupConfig = z.infer<typeof DeploymentGroupSchema>;
 export type RoutingConfig = z.infer<typeof RoutingConfigSchema>;
+export type RegionRoutingConfig = z.infer<typeof RoutingConfigSchema.shape.regionRouting>;
 export type ControlPlanePostgresConfig = z.infer<typeof ControlPlanePostgresSchema>;
 export type ControlPlaneRedisConfig = z.infer<typeof ControlPlaneRedisSchema>;
 export type ControlPlaneConfig = z.infer<typeof ControlPlaneConfigSchema>;
@@ -170,3 +267,9 @@ export type ObservabilityMetricsConfig = z.infer<typeof ObservabilityMetricsSche
 export type ObservabilityConfig = z.infer<typeof ObservabilityConfigSchema>;
 export type ApiCompatibilityConfig = z.infer<typeof ApiCompatibilitySchema>;
 export type ApiConfig = z.infer<typeof ApiConfigSchema>;
+export type ExactCacheConfig = z.infer<typeof ExactCacheConfigSchema>;
+export type CacheConfig = z.infer<typeof CacheConfigSchema>;
+export type AdaptiveTrafficShapingConfig = z.infer<typeof AdaptiveTrafficShapingSchema>;
+export type TrafficShapingConfig = z.infer<typeof TrafficShapingConfigSchema>;
+export type SecretsConfig = z.infer<typeof SecretsConfigSchema>;
+export type SecurityConfig = z.input<typeof SecurityConfigSchema>;

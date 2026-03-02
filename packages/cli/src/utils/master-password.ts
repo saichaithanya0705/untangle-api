@@ -2,8 +2,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { randomBytes } from 'crypto';
-
-const FALLBACK_PASSWORD = 'untangle-ai-default';
 const DEFAULT_PASSWORD_FILE = join(homedir(), '.untangle-ai', 'master.key');
 
 export function resolveMasterPassword(path = DEFAULT_PASSWORD_FILE): string {
@@ -26,7 +24,7 @@ export function resolveMasterPassword(path = DEFAULT_PASSWORD_FILE): string {
     const generated = randomBytes(32).toString('hex');
     writeFileSync(path, `${generated}\n`, { encoding: 'utf-8', mode: 0o600 });
     return generated;
-  } catch {
-    return FALLBACK_PASSWORD;
+  } catch (error) {
+    throw new Error(`Failed to resolve master password: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

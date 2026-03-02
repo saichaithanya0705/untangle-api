@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BarChart3, DollarSign, Zap, Clock, TrendingUp } from 'lucide-react';
+import { api, type UsageRecord } from '@/lib/api';
 
 interface UsageSummary {
   totalRequests: number;
@@ -20,18 +21,6 @@ interface UsageSummary {
     outputTokens: number;
     cost: number;
   }>;
-}
-
-interface UsageRecord {
-  id: string;
-  timestamp: string;
-  providerId: string;
-  modelId: string;
-  inputTokens: number;
-  outputTokens: number;
-  totalCost: number;
-  durationMs: number;
-  success: boolean;
 }
 
 function formatCost(cost: number): string {
@@ -60,8 +49,8 @@ export default function Usage() {
   useEffect(() => {
     setLoading(true);
     Promise.all([
-      fetch(`/api/usage?period=${period}`).then(r => r.json()),
-      fetch('/api/usage/records?limit=50').then(r => r.json()),
+      api.getUsage(period),
+      api.getUsageRecords(50),
     ])
       .then(([summaryData, recordsData]) => {
         setSummary(summaryData);

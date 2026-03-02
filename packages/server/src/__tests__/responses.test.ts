@@ -63,7 +63,7 @@ function createMockProvider(id: string, models: string[]): ProviderAdapter {
   };
 }
 
-function createResponsesApp(config: any) {
+function createResponsesApp(config: any, overrides?: { cache?: Config['cache'] }) {
   const registry = new ProviderRegistry();
   registry.register(createMockProvider('primary', ['primary-model']));
   registry.register(createMockProvider('secondary', ['secondary-model']));
@@ -73,12 +73,13 @@ function createResponsesApp(config: any) {
     ['secondary', 'secondary-key'],
   ]);
 
-  const options: ServerOptions = {
+  const appOptions: ServerOptions = {
     registry,
     config: {
       server: { port: 3000, host: 'localhost' },
       providers: {},
       routing: config,
+      cache: overrides?.cache,
       controlPlane: {
         enabled: false,
         virtualKeyHeader: 'x-untangle-key',
@@ -89,7 +90,7 @@ function createResponsesApp(config: any) {
     getApiKey: (providerId) => runtimeKeys.get(providerId),
   };
 
-  return createApp(options);
+  return createApp(appOptions);
 }
 
 describe('Responses Route', () => {
@@ -165,6 +166,143 @@ describe('Responses Route', () => {
     expect(body.model).toBe('secondary-model');
     expect(body.output_text).toBe('response fallback content');
     expect(body.usage.input_tokens).toBe(9);
+  });
+
+  it('returns cached non-stream responses envelopes when exact cache is enabled', async () => {
+    const app = createResponsesApp({
+      groups: [{
+        alias: 'responses-prod',
+        strategy: 'priority',
+        deployments: [
+          { provider: 'primary', model: 'primary-model', priority: 0 },
+        ],
+      }],
+    }, {
+      cache: {
+        exact: {
+          enabled: true,
+          ttlMs: 60_000,
+          maxEntries: 100,
+          chat: false,
+          responses: true,
+        },
+      },
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: 'chatcmpl-cache-responses',
+      object: 'chat.completion',
+      created: 1234567890,
+      model: 'primary-model',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: 'response-cache-value' },
+        finish_reason: 'stop',
+      }],
+      usage: {
+        prompt_tokens: 8,
+        completion_tokens: 3,
+        total_tokens: 11,
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const requestPayload = {
+      model: 'responses-prod',
+      input: 'cache this response',
+    };
+
+    const first = await app.request('/v1/responses', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(requestPayload),
+    });
+    expect(first.status).toBe(200);
+    expect(first.headers.get('x-untangle-cache')).toBe('miss');
+
+    const second = await app.request('/v1/responses', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(requestPayload),
+    });
+    expect(second.status).toBe(200);
+    expect(second.headers.get('x-untangle-cache')).toBe('hit');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const secondBody = await second.json() as { output_text: string };
+    expect(secondBody.output_text).toBe('response-cache-value');
+  });
+
+  it('mirrors successful non-stream responses requests to shadow deployments', async () => {
+    const app = createResponsesApp({
+      groups: [{
+        alias: 'responses-prod',
+        strategy: 'priority',
+        rollout: {
+          mode: 'disabled',
+          shadow: {
+            enabled: true,
+            samplePercent: 100,
+            maxDeployments: 1,
+          },
+        },
+        deployments: [
+          { provider: 'primary', model: 'primary-model', priority: 0, lane: 'stable' },
+          { provider: 'secondary', model: 'secondary-model', priority: 1, lane: 'shadow' },
+        ],
+      }],
+    });
+
+    const fetchMock = vi.fn().mockImplementation((_url, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body)) as { model: string };
+      const content = payload.model === 'primary-model' ? 'primary envelope' : 'shadow envelope';
+      return Promise.resolve(new Response(JSON.stringify({
+        id: `chatcmpl-${payload.model}`,
+        object: 'chat.completion',
+        created: 1234567890,
+        model: payload.model,
+        choices: [{
+          index: 0,
+          message: { role: 'assistant', content },
+          finish_reason: 'stop',
+        }],
+        usage: {
+          prompt_tokens: 8,
+          completion_tokens: 3,
+          total_tokens: 11,
+        },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await app.request('/v1/responses', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'responses-prod',
+        input: 'mirror this',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as { model: string; output_text: string };
+    expect(body.model).toBe('primary-model');
+    expect(body.output_text).toBe('primary envelope');
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    const firstPayload = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as { model: string };
+    const secondPayload = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)) as { model: string };
+    expect(firstPayload.model).toBe('primary-model');
+    expect(secondPayload.model).toBe('secondary-model');
   });
 
   it('returns 400 when input is missing', async () => {
