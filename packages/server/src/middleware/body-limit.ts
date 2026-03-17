@@ -8,7 +8,7 @@ function isBodyMethod(method: string): boolean {
 export function bodyLimitMiddleware(config?: SecurityConfig): MiddlewareHandler {
   const maxBodyBytes = config?.maxBodyBytes ?? 1024 * 1024;
   const maxMultipartBytes = config?.maxMultipartBytes ?? 10 * 1024 * 1024;
-  const requireContentLength = config?.requireContentLength ?? true;
+  const requireContentLength = config?.requireContentLength ?? false;
 
   return async (c, next) => {
     if (!isBodyMethod(c.req.method)) {

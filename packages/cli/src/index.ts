@@ -6,8 +6,8 @@ import { initCommand } from './commands/init.js';
 import { keysCommand } from './commands/keys.js';
 
 const program = new Command()
-  .name('untangle-ai')
-  .description('Unified AI API Gateway - proxy requests to multiple AI providers')
+  .name('untangle-api')
+  .description('OpenAI-compatible multi-provider API gateway')
   .version('0.1.0');
 
 program.addCommand(startCommand);

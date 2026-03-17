@@ -1,136 +1,74 @@
-# untangle-ai
+# Untangle API
 
-`untangle-ai` is an OpenAI-compatible multi-provider API gateway with routing, fallback, control-plane limits/billing, observability, and an optional web UI.
+Untangle API is an OpenAI-compatible multi-provider API gateway. It keeps the familiar `/v1/*` surface while adding provider routing, fallback controls, virtual keys, usage accounting, observability, and a bundled admin UI.
 
-It is designed to let you keep OpenAI-style client integrations while routing traffic across providers and models with operator controls.
+This repository is a pnpm monorepo. The public package prepared for npm publication is `untangle-api`; the internal workspace packages remain private under the `@untangle-ai/*` scope.
 
-## What You Get
+## What exists today
 
-- OpenAI-compatible data plane endpoints:
-  - `POST /v1/chat/completions`
-  - `POST /v1/responses`
-  - `POST /v1/embeddings`
-  - `POST /v1/audio/transcriptions`
-  - `POST /v1/audio/speech`
-  - `POST /v1/images/generations`
-  - `GET /v1/models`, `GET /v1/models/:modelId`
-- Multi-provider support:
-  - OpenAI, Anthropic, Google, Groq, OpenRouter
-  - Custom providers via request/response templates
-- Deployment-group routing engine:
-  - `priority`, `weighted`, `shuffle`, `least-latency`
-  - retry/fallback with `Retry-After` support
-  - cooldown + circuit breaker behavior
-  - stream fallback policy controls
-  - regional failover controls and health-based regional ejection
-- Rollout controls (Phase 3):
-  - deployment lanes: `stable`, `canary`, `shadow`
-  - rollout modes: `disabled`, `canary`, `ab`
-  - deterministic A/B routing via rollout key headers
-  - shadow request mirroring for non-stream chat/responses
-- Exact response cache (Phase 3 baseline):
-  - configurable TTL and max entries
-  - per-route toggles for `chat` and `responses`
-  - `x-untangle-cache: hit|miss` response signaling
-- Traffic shaping (Phase 3 baseline):
-  - data-plane (`/v1/*`) token-bucket throttling
-  - burst control and adaptive RPS downscale/upscale
-  - throttle and current-RPS metrics in Prometheus output
-- Control-plane foundation (optional):
-  - virtual keys
-  - key-level limits (RPM/TPM/budgets/model allow-deny)
-  - usage/spend/reconciliation endpoints
-  - PostgreSQL/Redis adapters with safe in-memory fallback
-- Observability:
-  - structured request logs
-  - Prometheus metrics at `GET /metrics`
-  - W3C `traceparent` propagation and provider span logging
-- Security hardening (Phase 3 baseline):
-  - optional admin-plane auth guard for `/api/*`
-  - configurable admin header + optional bearer token
-  - admin-auth denial metrics
-- Admin IaC operations (Phase 3 baseline):
-  - declarative export/plan/apply endpoints for provider/model/region state
-- Operator UI:
-  - dashboard pages for providers, models, keys, usage, and settings (enabled by default; disable with `--no-ui`)
+- OpenAI-compatible endpoints for chat, responses, embeddings, audio transcription, audio speech, image generation, and model discovery.
+- Provider adapters for OpenAI, Anthropic, Google, Groq, OpenRouter, plus custom templated providers.
+- Deployment-group routing with priority, weighted, shuffle, least-latency, retry, cooldown, circuit breaker, regional failover, canary, A/B, and shadow traffic controls.
+- Control-plane features for virtual keys, key-level limits, spend and usage tracking, reconciliation, and declarative export/plan/apply operations.
+- Prometheus metrics, structured request logs, and trace propagation.
+- A React admin UI served from the same gateway binary.
 
-## Architecture
-
-Monorepo layout:
+## Repository layout
 
 ```text
 packages/
-  core/     shared types, provider adapters, routing, pricing, control-plane
-  server/   Hono HTTP server and route handlers
-  cli/      command-line entrypoint and commands
-  ui/       React + Vite dashboard
+  core/    internal runtime, config, provider adapters, routing, control-plane
+  server/  Hono HTTP server and route handlers
+  cli/     public CLI package and release artifact
+  ui/      React + Vite admin UI
 ```
 
-Key docs in repo:
+Supporting docs:
 
-- [ROADMAP.md](./ROADMAP.md): long-term product direction
-- [PLAN.md](./PLAN.md): phased execution and status
-- [PHASE2_RUNBOOK.md](./PHASE2_RUNBOOK.md): hardening validation commands and soak tuning
-- [PHASE3_ENHANCEMENTS.md](./PHASE3_ENHANCEMENTS.md): follow-on enhancement backlog for advanced features
-- [API_FIELD_CONTRACTS.md](./API_FIELD_CONTRACTS.md): strict request/field contract notes
+- [`docs/hardening-runbook.md`](./docs/hardening-runbook.md)
+- [`docs/api-field-contracts.md`](./docs/api-field-contracts.md)
+- [`docs/roadmap.md`](./docs/roadmap.md)
+- [`examples/`](./examples)
 
-## Quick Start (Local)
+## Quick start from source
 
-### 1) Prerequisites
+Requirements:
 
-- Node.js `>=18`
-- `pnpm` (workspace uses `pnpm@9`)
+- Node.js `>=18.18.0`
+- `pnpm@9`
 
-### 2) Install and Build
+Install and build:
 
 ```bash
 pnpm install
 pnpm build
 ```
 
-### 3) Initialize Config
+Create a localhost-only config:
 
 ```bash
-pnpm --filter untangle-ai exec untangle-ai init
+pnpm --filter untangle-api exec untangle-api init
 ```
 
-This creates `./untangle.yaml`. If no config is present, the server still starts with defaults.
+That writes `./untangle-api.yaml` with local-development defaults. The generated file intentionally disables admin auth, metrics protection, and data-plane auth so you can boot the gateway on loopback quickly. Do not expose that config on `0.0.0.0` or behind a public ingress.
 
-### 4) Configure API Keys
-
-You can provide provider keys by:
-
-1. `untangle.yaml` (`providers.<id>.apiKey`)
-2. `untangle.yaml` secret reference (`providers.<id>.apiKeySecretRef`)
-3. CLI encrypted key store (`untangle-ai keys add <provider>`)
-4. environment variables (for example `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`)
-
-`apiKeySecretRef` supports:
-
-- `env:VAR_NAME` to read from process environment
-- `file:relative/or/absolute/path` when `secrets.allowFileRefs=true`
-
-Example:
+Configure a provider key:
 
 ```bash
 # macOS/Linux
 export OPENAI_API_KEY=sk-...
-export ANTHROPIC_API_KEY=sk-ant-...
 
 # PowerShell
 $env:OPENAI_API_KEY="sk-..."
-$env:ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-### 5) Start the Gateway
+Start the gateway:
 
 ```bash
-pnpm --filter untangle-ai start -- --host 127.0.0.1 --port 4010
+pnpm --filter untangle-api start -- --host 127.0.0.1 --port 4010
 ```
 
-Then open `http://127.0.0.1:4010`.
-
-### 6) Smoke Test
+Smoke test:
 
 ```bash
 curl http://127.0.0.1:4010/v1/models
@@ -140,319 +78,73 @@ curl http://127.0.0.1:4010/v1/chat/completions \
   -d "{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}"
 ```
 
-## CLI Commands
+## Security defaults and production use
+
+- `untangle-api init` is for local development only.
+- For production, use [`examples/config/untangle-api.yaml`](./examples/config/untangle-api.yaml) as the starting point.
+- Before exposing the gateway outside localhost, enable `security.requireAdminAuthForApi`, `security.protectMetrics`, and `security.requireDataPlaneAuth`.
+- Set `security.adminApiKeySecretRef` or `security.adminApiKey` explicitly.
+- When `requireDataPlaneAuth=true`, clients must send a valid virtual key in `x-untangle-key` unless you change `security.dataPlaneHeader`.
+- If you want persisted keys and limits, enable Postgres and Redis under `controlPlane`; otherwise the gateway falls back to in-memory behavior where configured.
+
+## CLI commands
 
 ```bash
-untangle-ai init
-untangle-ai start [--port 3000] [--host localhost] [--config ./untangle.yaml] [--discover] [--no-ui]
-untangle-ai keys add <provider>
-untangle-ai keys list
-untangle-ai keys remove <provider>
-untangle-ai keys test <provider>
+untangle-api init
+untangle-api start [--port 3000] [--host localhost] [--config ./untangle-api.yaml] [--discover] [--no-ui]
+untangle-api keys add <provider>
+untangle-api keys list
+untangle-api keys remove <provider>
+untangle-api keys test <provider>
 ```
 
-## API Surface
+`untangle-api keys add` stores runtime credentials in the local encrypted key store under `~/.untangle-api/master.key`, with migration fallback from the legacy `~/.untangle-ai/master.key` path.
 
-### Core Data Plane
+## Validation and release checks
 
-| Method | Path | Notes |
-|---|---|---|
-| `POST` | `/v1/chat/completions` | OpenAI-compatible chat, supports streaming |
-| `POST` | `/v1/responses` | Responses API compatibility (stream + non-stream) |
-| `POST` | `/v1/embeddings` | Embeddings proxy with routing/fallback |
-| `POST` | `/v1/audio/transcriptions` | Provider-gated |
-| `POST` | `/v1/audio/speech` | Provider-gated |
-| `POST` | `/v1/images/generations` | Provider-gated |
-| `GET` | `/v1/models` | List enabled models |
-| `GET` | `/v1/models/:modelId` | Model details |
-
-### Operational + Admin Plane
-
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/health` | Liveness |
-| `GET` | `/metrics` | Prometheus metrics |
-| `GET` | `/api/settings` | Effective runtime settings |
-| `GET` | `/api/router/health` | Router runtime health snapshot |
-| `GET` | `/api/router/decisions/:modelAlias` | Deployment selection debug snapshot |
-| `GET` | `/api/router/regions` | Regional failover/ejection state |
-| `POST` | `/api/router/regions/:region/eject` | Force region ejection (manual failover) |
-| `POST` | `/api/router/regions/:region/restore` | Restore ejected region |
-| `GET` | `/api/admin/iac/export` | Export declarative provider/model/region state |
-| `POST` | `/api/admin/iac/plan` | Dry-run change plan for declarative state payload |
-| `POST` | `/api/admin/iac/apply` | Apply declarative provider/model/region state payload |
-| `GET` | `/api/usage` | Usage summary (`period` query support) |
-| `GET` | `/api/usage/reconciliation` | Usage vs spend-ledger reconciliation |
-| `GET` | `/api/usage/records` | Recent usage events |
-| `DELETE` | `/api/usage` | Clear in-memory usage tracker (and control-plane events if enabled) |
-| `GET` | `/api/pricing` | Cached model pricing |
-| `POST` | `/api/pricing/refresh` | Refresh pricing cache |
-| `POST` | `/api/pricing/calculate` | Cost estimate for token counts |
-| `GET/POST` | `/api/discover/*` | Provider/model discovery and toggles |
-| `GET/POST` | `/api/control-plane/*` | Virtual keys, limits, spend, reconciliation, schema |
-
-## Configuration Example
-
-```yaml
-server:
-  port: 3000
-  host: localhost
-
-providers:
-  openai:
-    enabled: true
-    # apiKeySecretRef: env:OPENAI_API_KEY
-  anthropic:
-    enabled: true
-  google:
-    enabled: true
-  groq:
-    enabled: true
-  openrouter:
-    enabled: true
-
-routing:
-  regionRouting:
-    enabled: true
-    homeRegion: us-east-1
-    defaultClientRegion: us-east-1
-    failoverRegions: [us-west-2, eu-west-1]
-    allowCrossRegionFallback: true
-    failureEjection:
-      enabled: true
-      failureThreshold: 5
-      cooldownMs: 30000
-  groups:
-    - alias: gpt-prod
-      strategy: priority
-      cooldownMs: 5000
-      retryPolicy:
-        maxAttempts: 3
-        retryableStatusCodes: [408, 409, 429, 500, 502, 503, 504]
-      circuitBreaker:
-        failureThreshold: 3
-        resetTimeoutMs: 30000
-      streamFallbackPolicy:
-        mode: continue-disabled
-      deployments:
-        - provider: openai
-          model: gpt-4o
-          region: us-east-1
-          lane: stable
-          priority: 0
-        - provider: openrouter
-          model: openai/gpt-4o
-          region: us-west-2
-          lane: canary
-          priority: 1
-      rollout:
-        mode: ab
-        canaryPercent: 20
-        includeStableFallback: true
-        shadow:
-          enabled: true
-          samplePercent: 10
-          maxDeployments: 1
-
-controlPlane:
-  enabled: true
-  virtualKeyHeader: x-untangle-key
-  postgres:
-    enabled: true
-    connectionString: postgresql://postgres:postgres@localhost:5432/untangle
-    schema: public
-  redis:
-    enabled: true
-    connectionString: redis://localhost:6379
-    keyPrefix: untangle
-
-observability:
-  logging:
-    level: info
-  tracing:
-    enabled: true
-    sampleRate: 1.0
-    logSpans: true
-  metrics:
-    providerLabels: true
-
-api:
-  compatibility:
-    strictValidation: false
-    normalizeLegacyParams: true
-
-cache:
-  exact:
-    enabled: true
-    ttlMs: 30000
-    maxEntries: 1000
-    chat: true
-    responses: true
-
-trafficShaping:
-  enabled: true
-  requestsPerSecond: 100
-  burst: 200
-  adaptive:
-    enabled: true
-    minRps: 10
-    maxRps: 300
-    targetLatencyMs: 750
-    errorRateThreshold: 0.05
-    decreaseFactor: 0.8
-    increaseStep: 2
-    adjustIntervalMs: 2000
-
-secrets:
-  enabled: true
-  allowFileRefs: false
-  baseDir: .
-
-security:
-  requireAdminAuthForApi: true
-  adminApiKeySecretRef: env:UNTANGLE_ADMIN_API_KEY
-  adminHeader: x-untangle-admin-key
-  allowBearerToken: true
-  requireDataPlaneAuth: true
-  dataPlaneHeader: x-untangle-key
-  corsAllowedOrigins: []
-  corsAllowCredentials: false
-  maxBodyBytes: 1048576
-  maxMultipartBytes: 10485760
-  requireContentLength: true
-  protectMetrics: true
-  hsts:
-    enabled: false
-    maxAgeSeconds: 15552000
-    includeSubDomains: true
-    preload: false
-```
-
-## Virtual Keys and Limits
-
-When control-plane is enabled, clients can send a virtual key header (default `x-untangle-key`) to enforce per-key policy.
-
-Create a key:
-
-```bash
-curl -X POST http://127.0.0.1:4010/api/control-plane/keys \
-  -H "Content-Type: application/json" \
-  -d "{\"name\":\"team-a\",\"key\":\"cp_team_a\",\"limits\":{\"rpm\":60,\"allowedModels\":[\"gpt-prod\"]}}"
-```
-
-Use the key in data-plane calls:
-
-```bash
-curl http://127.0.0.1:4010/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "x-untangle-key: cp_team_a" \
-  -d "{\"model\":\"gpt-prod\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}"
-```
-
-Regional failover controls:
-
-```bash
-curl -X POST http://127.0.0.1:4010/api/router/regions/us-east-1/eject \
-  -H "Content-Type: application/json" \
-  -d "{\"reason\":\"drill\"}"
-
-curl http://127.0.0.1:4010/api/router/regions
-
-curl -X POST http://127.0.0.1:4010/api/router/regions/us-east-1/restore
-```
-
-Rollout-key headers for deterministic A/B selection:
-
-```bash
-curl http://127.0.0.1:4010/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "x-untangle-rollout-key: user-123" \
-  -d "{\"model\":\"gpt-prod\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}"
-```
-
-Admin IaC operations:
-
-```bash
-curl http://127.0.0.1:4010/api/admin/iac/export
-
-curl -X POST http://127.0.0.1:4010/api/admin/iac/plan \
-  -H "Content-Type: application/json" \
-  -d "{\"providers\":[{\"id\":\"openai\",\"enabled\":true}],\"routing\":{\"regions\":[{\"region\":\"us-east-1\",\"ejected\":false}]}}"
-```
-
-## Hardening and Validation
-
-Baseline:
+Core validation:
 
 ```bash
 pnpm test
 pnpm run validate:phase1
+pnpm run validate:phase2
 ```
 
-Hardening suite:
+Focused hardening commands:
 
 ```bash
-pnpm run validate:phase2
 pnpm run phase2:release-safety
 pnpm run phase2:chaos
 pnpm run phase2:soak
 ```
 
-Provider billing reconciliation helper:
+CLI packaging:
 
 ```bash
-node scripts/reconcile-provider-billing.js \
-  --server http://127.0.0.1:4010 \
-  --provider openai \
-  --csv path/to/provider-export.csv \
-  --model-column model \
-  --cost-column cost_usd \
-  --timestamp-column timestamp \
-  --tolerance-usd 0.01
+pnpm run pack:cli:dry-run
+pnpm run pack:cli
 ```
 
-## Development
+`pnpm run pack:cli` writes the tarball to `artifacts/packages/` and rejects unexpected published files.
 
-```bash
-pnpm install
-pnpm build
-pnpm dev
-pnpm test
-```
+## Public package identity
 
-Useful package-level commands:
+- Repository: `saichaithanya0705/untangle-api`
+- Product name: `Untangle API`
+- npm package: `untangle-api`
+- CLI binary: `untangle-api`
 
-```bash
-pnpm --filter @untangle-ai/server test
-pnpm --filter @untangle-ai/ui dev
-pnpm --filter untangle-ai start -- --no-ui
-```
+The package metadata and tarball flow are ready for publication, but this repository does not assume a release already exists on npm. Use `pnpm run pack:cli` to test the package locally.
 
-## Release (npm)
-
-We publish a single public package: `untangle-ai`. The CLI bundles the server + core and ships the UI assets.
-
-```bash
-pnpm -w run release
-cd packages/cli
-npm publish
-```
-
-Note: `npm publish` in `packages/cli` runs `pnpm -w run release` automatically via `prepublishOnly`,
-so the UI is always included.
+The internal workspace packages are implementation details and are intentionally marked private.
 
 ## Troubleshooting
 
-- `model_not_found`: model alias is not enabled in provider/routing config.
-- `missing_api_key`: provider key is not configured (file, key store, or env var).
-- `unsupported_provider`: endpoint is not supported by selected provider (for example some media/embeddings flows).
-- `control_plane_required`: reconciliation endpoint called without control-plane enabled.
-- `control_plane_unavailable`: temporary PostgreSQL/Redis/control-plane dependency issue.
-
-## Roadmap and Status
-
-- Strategic roadmap: [ROADMAP.md](./ROADMAP.md)
-- Implementation tracking: [PLAN.md](./PLAN.md)
+- `missing_api_key`: the selected provider has no configured credential.
+- `model_not_found`: the requested model alias is not enabled in provider or routing config.
+- `data_plane_auth_required`: data-plane auth is enabled and no virtual key was supplied.
+- `invalid_virtual_key`: the supplied virtual key does not resolve or has been revoked.
+- `control_plane_unavailable`: the configured control-plane dependency is unavailable.
 
 ## License
 

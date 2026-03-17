@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createApp, type ServerOptions } from '../index.js';
-import { ProviderRegistry, type ProviderAdapter } from '@untangle-ai/core';
+import { ProviderRegistry, SecurityConfigSchema, type ProviderAdapter } from '@untangle-ai/core';
 
 function createMockProvider(id: string, models: string[]): ProviderAdapter {
   const config = {
@@ -93,18 +93,26 @@ function createServer(overrides?: {
       },
       controlPlane: {
         enabled: false,
+        failureMode: 'fallback',
         virtualKeyHeader: 'x-untangle-key',
         postgres: { enabled: false, schema: 'public' },
         redis: { enabled: false, keyPrefix: 'untangle' },
       },
       security: overrides?.security
-        ? {
+        ? SecurityConfigSchema.parse({
             requireAdminAuthForApi: overrides.security.requireAdminAuthForApi ?? false,
             adminApiKey: overrides.security.adminApiKey,
             adminHeader: overrides.security.adminHeader ?? 'x-untangle-admin-key',
             allowBearerToken: overrides.security.allowBearerToken ?? true,
-          }
-        : undefined,
+            requireDataPlaneAuth: false,
+            requireContentLength: false,
+            protectMetrics: false,
+          })
+        : SecurityConfigSchema.parse({
+            requireDataPlaneAuth: false,
+            requireContentLength: false,
+            protectMetrics: false,
+          }),
     },
     getApiKey: () => 'test-key',
   };
@@ -154,6 +162,88 @@ describe('Admin security middleware', () => {
       headers: { authorization: 'Bearer secret-token' },
     });
     expect(res.status).toBe(200);
+  });
+
+  it('creates an admin session cookie and accepts it on later admin requests', async () => {
+    const app = createServer({
+      security: {
+        requireAdminAuthForApi: true,
+        adminApiKey: 'secret-token',
+      },
+    });
+
+    const login = await app.request('/api/admin/session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ adminKey: 'secret-token' }),
+    });
+    expect(login.status).toBe(200);
+    const cookie = login.headers.get('set-cookie');
+    expect(cookie).toContain('untangle_admin_session=');
+
+    const settings = await app.request('/api/settings', {
+      headers: { cookie: String(cookie).split(';', 1)[0] ?? '' },
+    });
+    expect(settings.status).toBe(200);
+  });
+
+  it('rejects admin session creation with the wrong bootstrap key', async () => {
+    const app = createServer({
+      security: {
+        requireAdminAuthForApi: true,
+        adminApiKey: 'secret-token',
+      },
+    });
+
+    const login = await app.request('/api/admin/session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ adminKey: 'wrong-token' }),
+    });
+    expect(login.status).toBe(401);
+  });
+
+  it('creates a shareable dashboard snapshot and records growth metrics', async () => {
+    const app = createServer({
+      security: {
+        requireAdminAuthForApi: true,
+        adminApiKey: 'secret-token',
+      },
+    });
+
+    const login = await app.request('/api/admin/session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ adminKey: 'secret-token' }),
+    });
+    expect(login.status).toBe(200);
+    const cookie = login.headers.get('set-cookie');
+
+    const shareResponse = await app.request('/api/dashboard/share', {
+      method: 'POST',
+      headers: { cookie: String(cookie).split(';', 1)[0] ?? '' },
+    });
+    expect(shareResponse.status).toBe(200);
+    const shareBody = await shareResponse.json() as { token: string; expiresAt: string };
+    expect(shareBody.token.length).toBeGreaterThan(20);
+    expect(new Date(shareBody.expiresAt).getTime()).toBeGreaterThan(Date.now());
+
+    const publicResponse = await app.request(`/public/dashboard-share/${shareBody.token}`);
+    expect(publicResponse.status).toBe(200);
+    const publicBody = await publicResponse.json() as {
+      snapshot: {
+        summary: { totalProviders: number; totalModels: number };
+        providers: Array<{ id: string }>;
+      };
+    };
+    expect(publicBody.snapshot.summary.totalProviders).toBe(2);
+    expect(publicBody.snapshot.summary.totalModels).toBe(2);
+    expect(publicBody.snapshot.providers.map((provider) => provider.id)).toContain('primary');
+
+    const metrics = await app.request('/metrics');
+    const metricsBody = await metrics.text();
+    expect(metricsBody).toContain('untangle_growth_events_total{event="share_generated"} 1');
+    expect(metricsBody).toContain('untangle_growth_events_total{event="share_opened"} 1');
   });
 
   it('does not apply admin auth to data-plane routes', async () => {

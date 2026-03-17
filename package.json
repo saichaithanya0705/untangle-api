@@ -1,16 +1,32 @@
 {
-  "name": "untangle-ai-monorepo",
+  "name": "untangle-api-monorepo",
   "private": true,
+  "description": "Monorepo for Untangle API, an OpenAI-compatible multi-provider API gateway",
+  "license": "MIT",
+  "author": "Sai Chaithanya Reddy Yudururi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/saichaithanya0705/untangle-api.git"
+  },
+  "homepage": "https://github.com/saichaithanya0705/untangle-api#readme",
+  "bugs": {
+    "url": "https://github.com/saichaithanya0705/untangle-api/issues"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
     "test": "turbo run test",
-    "validate:phase1": "pnpm --filter @untangle-ai/core build && pnpm --filter @untangle-ai/server build && pnpm --filter @untangle-ai/server test && pnpm --filter untangle-ai build",
-    "validate:phase2": "pnpm --filter @untangle-ai/core build && pnpm --filter @untangle-ai/server build && pnpm --filter @untangle-ai/server test:phase2 && pnpm --filter untangle-ai build && node scripts/check-control-plane-migration.js && node scripts/generate-rollback-plan.js",
+    "validate:phase1": "pnpm run build && pnpm --filter @untangle-ai/server test",
+    "validate:phase2": "pnpm run validate:phase1 && pnpm --filter @untangle-ai/server test:phase2 && node scripts/check-control-plane-migration.js && node scripts/generate-rollback-plan.js --output artifacts/release/rollback-plan.json && node scripts/pack-cli.js --dry-run",
     "phase2:release-safety": "node scripts/release-safety-check.js",
     "phase2:soak": "pnpm --filter @untangle-ai/server test:soak",
     "phase2:chaos": "pnpm --filter @untangle-ai/server test:chaos",
     "phase2:reconcile-billing": "node scripts/reconcile-provider-billing.js",
+    "pack:cli": "node scripts/pack-cli.js",
+    "pack:cli:dry-run": "node scripts/pack-cli.js --dry-run",
     "lint": "turbo run lint",
     "clean": "turbo run clean",
     "release": "node scripts/build-release.js"

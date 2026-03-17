@@ -2,7 +2,7 @@
   "name": "@untangle-ai/server",
   "version": "0.1.0",
   "private": true,
-  "description": "Hono HTTP server for untangle-ai",
+  "description": "Internal workspace package for the Untangle API HTTP server",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -39,8 +39,15 @@
     "rimraf": "^6.0.0",
     "vitest": "^3.0.0"
   },
-  "publishConfig": {
-    "access": "public"
+  "license": "MIT",
+  "author": "Sai Chaithanya Reddy Yudururi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/saichaithanya0705/untangle-api.git",
+    "directory": "packages/server"
   },
-  "license": "MIT"
+  "homepage": "https://github.com/saichaithanya0705/untangle-api/tree/main/packages/server",
+  "bugs": {
+    "url": "https://github.com/saichaithanya0705/untangle-api/issues"
+  }
 }

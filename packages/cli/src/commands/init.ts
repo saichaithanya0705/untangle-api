@@ -2,7 +2,9 @@ import { Command } from 'commander';
 import { writeFileSync, existsSync } from 'fs';
 import { logger } from '../utils/logger.js';
 
-const DEFAULT_CONFIG = `# untangle-ai configuration
+const DEFAULT_CONFIG = `# Untangle API configuration
+# Local development defaults. Before exposing the gateway outside localhost,
+# enable admin authentication, protect /metrics, and require data-plane auth.
 server:
   port: 3000
   host: localhost
@@ -18,25 +20,24 @@ providers:
     #     enabled: true
 
 security:
-  requireAdminAuthForApi: true
-  adminApiKeySecretRef: env:UNTANGLE_ADMIN_API_KEY
+  requireAdminAuthForApi: false
+  protectMetrics: false
   adminHeader: x-untangle-admin-key
   allowBearerToken: true
-  requireDataPlaneAuth: true
+  requireDataPlaneAuth: false
   dataPlaneHeader: x-untangle-key
   corsAllowedOrigins: []
   corsAllowCredentials: false
   maxBodyBytes: 1048576
   maxMultipartBytes: 10485760
   requireContentLength: true
-  protectMetrics: true
 `;
 
 export const initCommand = new Command('init')
-  .description('Initialize a new untangle-ai configuration file')
+  .description('Initialize a new Untangle API configuration file')
   .option('-f, --force', 'Overwrite existing config file')
   .action((options) => {
-    const configPath = './untangle.yaml';
+    const configPath = './untangle-api.yaml';
 
     if (existsSync(configPath) && !options.force) {
       logger.error(`Config file already exists: ${configPath}`);
@@ -46,5 +47,5 @@ export const initCommand = new Command('init')
 
     writeFileSync(configPath, DEFAULT_CONFIG, 'utf-8');
     logger.success(`Created config file: ${configPath}`);
-    logger.dim('Edit this file to configure your providers and API keys');
+    logger.dim('Edit this file to configure providers, routing, and production security defaults.');
   });

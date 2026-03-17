@@ -82,6 +82,7 @@ function createResponsesApp(config: any, overrides?: { cache?: Config['cache'] }
       cache: overrides?.cache,
       controlPlane: {
         enabled: false,
+        failureMode: 'fallback',
         virtualKeyHeader: 'x-untangle-key',
         postgres: { enabled: false, schema: 'public' },
         redis: { enabled: false, keyPrefix: 'untangle' },

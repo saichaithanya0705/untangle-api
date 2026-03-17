@@ -1,23 +1,26 @@
 {
-  "name": "untangle-ai",
+  "name": "untangle-api",
   "version": "0.1.0",
-  "description": "Unified AI API Gateway - proxy requests to multiple AI providers through OpenAI-compatible endpoints",
+  "description": "OpenAI-compatible multi-provider API gateway with routing, control plane features, observability, and a bundled admin UI",
   "type": "module",
   "bin": {
-    "untangle-ai": "./dist/index.js"
+    "untangle-api": "./dist/index.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "ui-dist"
+    "ui-dist",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "clean": "rimraf dist",
     "start": "node ./dist/index.js start",
-    "prepublishOnly": "pnpm -w run release"
+    "prepack": "pnpm -w run release",
+    "prepublishOnly": "pnpm -w run pack:cli:dry-run"
   },
   "dependencies": {
     "commander": "^12.1.0",
@@ -38,23 +41,32 @@
     "ai",
     "api",
     "gateway",
+    "multi-provider",
+    "openai-compatible",
     "proxy",
     "openai",
     "anthropic",
-    "claude",
     "gemini",
     "groq",
     "llm",
-    "chatgpt"
+    "observability",
+    "control-plane"
   ],
-  "author": "",
+  "author": "Sai Chaithanya Reddy Yudururi",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/untangle-ai"
+    "url": "git+https://github.com/saichaithanya0705/untangle-api.git",
+    "directory": "packages/cli"
   },
-  "homepage": "https://github.com/your-username/untangle-ai#readme",
+  "homepage": "https://github.com/saichaithanya0705/untangle-api/tree/main/packages/cli",
+  "bugs": {
+    "url": "https://github.com/saichaithanya0705/untangle-api/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.18.0"
   }
 }

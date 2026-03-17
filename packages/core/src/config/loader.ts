@@ -5,7 +5,14 @@ import { ConfigSchema, SecurityConfigSchema, type Config } from './schema.js';
 export function loadConfig(configPath?: string): Config {
   const paths = configPath
     ? [configPath]
-    : ['./untangle.yaml', './untangle.yml', './config/untangle.yaml'];
+    : [
+        './untangle-api.yaml',
+        './untangle-api.yml',
+        './untangle.yaml',
+        './untangle.yml',
+        './config/untangle-api.yaml',
+        './config/untangle.yaml',
+      ];
 
   for (const path of paths) {
     if (existsSync(path)) {

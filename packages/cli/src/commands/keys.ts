@@ -150,7 +150,7 @@ const testCommand = new Command('test')
 
       if (!apiKey) {
         logger.error(`No API key stored for ${providerId}`);
-        logger.dim(`Use 'untangle-ai keys add ${providerId}' to add one`);
+        logger.dim(`Use 'untangle-api keys add ${providerId}' to add one`);
         process.exit(1);
       }
 

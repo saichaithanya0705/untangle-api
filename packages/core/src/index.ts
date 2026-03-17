@@ -50,6 +50,7 @@ export {
   type CircuitBreakerConfig,
   type StreamFallbackPolicyConfig,
   type ControlPlaneConfig,
+  type ControlPlaneFailureMode,
   type ControlPlanePostgresConfig,
   type ControlPlaneRedisConfig,
   type ObservabilityLoggingConfig,
@@ -109,6 +110,8 @@ export {
   type UsageSummary,
   type UsageFilter,
   type UsageRecordListener,
+  type UsageRecordListenerFailure,
+  type UsageRecordListenerErrorListener,
 } from './pricing/index.js';
 
 // Control Plane

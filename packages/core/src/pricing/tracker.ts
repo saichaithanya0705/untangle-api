@@ -2,7 +2,7 @@
  * Usage tracker - tracks token consumption and costs per request/session
  */
 
-import { pricingFetcher, type ModelPricing } from './fetcher.js';
+import { pricingFetcher } from './fetcher.js';
 
 export interface UsageRecord {
   id: string;
@@ -50,11 +50,20 @@ export interface UsageFilter {
 }
 
 export type UsageRecordListener = (record: UsageRecord) => void | Promise<void>;
+export interface UsageRecordListenerFailure {
+  listenerName: string;
+  record: UsageRecord;
+  error: unknown;
+}
+export type UsageRecordListenerErrorListener = (
+  failure: UsageRecordListenerFailure,
+) => void | Promise<void>;
 
 export class UsageTracker {
   private records: UsageRecord[] = [];
   private maxRecords: number = 10000; // Keep last 10k records in memory
   private listeners = new Set<UsageRecordListener>();
+  private listenerErrorListeners = new Set<UsageRecordListenerErrorListener>();
 
   /**
    * Record a completed request
@@ -90,8 +99,12 @@ export class UsageTracker {
     this.records.push(record);
 
     for (const listener of this.listeners) {
-      Promise.resolve(listener(record)).catch(() => {
-        // Listener failures should not affect request handling.
+      Promise.resolve(listener(record)).catch((listenerError) => {
+        this.notifyListenerFailure({
+          listenerName: listener.name || 'anonymous_listener',
+          record,
+          error: listenerError,
+        });
       });
     }
 
@@ -238,8 +251,24 @@ export class UsageTracker {
     };
   }
 
+  addListenerErrorListener(listener: UsageRecordListenerErrorListener): () => void {
+    this.listenerErrorListeners.add(listener);
+    return () => {
+      this.listenerErrorListeners.delete(listener);
+    };
+  }
+
   clearListeners(): void {
     this.listeners.clear();
+    this.listenerErrorListeners.clear();
+  }
+
+  private notifyListenerFailure(failure: UsageRecordListenerFailure): void {
+    for (const listener of this.listenerErrorListeners) {
+      Promise.resolve(listener(failure)).catch(() => {
+        // Error-listener failures should not affect request handling.
+      });
+    }
   }
 }
 

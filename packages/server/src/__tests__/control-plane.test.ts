@@ -71,6 +71,7 @@ describe('Control Plane Routes', () => {
       },
       controlPlane: {
         enabled: true,
+        failureMode: 'fallback',
         virtualKeyHeader: 'x-untangle-key',
         postgres: { enabled: false, schema: 'public' },
         redis: { enabled: false, keyPrefix: 'untangle' },

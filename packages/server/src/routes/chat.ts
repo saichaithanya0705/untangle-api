@@ -221,6 +221,9 @@ export function buildChatContinuationRequest(
 export function createChatRoutes(ctx: ChatContext) {
   const app = new Hono();
   const deploymentRouter = ctx.router;
+  const getContextValue = (context: Context, key: string): unknown => (
+    context.get as unknown as (name: string) => unknown
+  )(key);
 
   app.post('/v1/chat/completions', async (c) => {
     const startTime = Date.now();
@@ -271,13 +274,13 @@ export function createChatRoutes(ctx: ChatContext) {
       if (virtualKeyGate.deniedResponse) {
         return virtualKeyGate.deniedResponse;
       }
-      const tenantId = virtualKeyGate.virtualKeyId ?? (c.get('tenantId') as string | undefined);
+      const tenantId = virtualKeyGate.virtualKeyId ?? (getContextValue(c, 'tenantId') as string | undefined);
       usageMetadata = virtualKeyGate.virtualKeyId
         ? { virtualKeyId: virtualKeyGate.virtualKeyId }
         : undefined;
       const selectionContext = resolveDeploymentSelectionContext(c, ctx.routingConfig);
       const selection = deploymentRouter.selectDeployments(body.model, ctx.registry, selectionContext);
-      const exactCacheKey = (!body.stream && ctx.exactCache?.isEnabled('chat') && tenantId)
+      const exactCacheKey = (!body.stream && ctx.exactCache?.isEnabled('chat'))
         ? buildExactCacheKey('chat', normalizedBody, {
             tenantId,
             virtualKeyId: virtualKeyGate.virtualKeyId,

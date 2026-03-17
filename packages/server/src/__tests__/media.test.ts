@@ -84,6 +84,7 @@ function createMediaApp(config: any, strictValidation: boolean = false) {
       routing: config,
       controlPlane: {
         enabled: false,
+        failureMode: 'fallback',
         virtualKeyHeader: 'x-untangle-key',
         postgres: { enabled: false, schema: 'public' },
         redis: { enabled: false, keyPrefix: 'untangle' },

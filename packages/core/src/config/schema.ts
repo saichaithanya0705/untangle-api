@@ -141,6 +141,7 @@ export const ControlPlaneRedisSchema = z.object({
 
 export const ControlPlaneConfigSchema = z.object({
   enabled: z.boolean().default(false),
+  failureMode: z.enum(['fallback', 'fail']).default('fallback'),
   virtualKeyHeader: z.string().default('x-untangle-key'),
   postgres: ControlPlanePostgresSchema.default({}),
   redis: ControlPlaneRedisSchema.default({}),
@@ -217,14 +218,14 @@ export const SecurityConfigSchema = z.object({
   adminApiKeySecretRef: z.string().trim().min(1).optional(),
   adminHeader: z.string().default('x-untangle-admin-key'),
   allowBearerToken: z.boolean().default(true),
-  requireDataPlaneAuth: z.boolean().default(true),
+  requireDataPlaneAuth: z.boolean().default(false),
   dataPlaneHeader: z.string().default('x-untangle-key'),
   corsAllowedOrigins: z.array(z.string().trim().min(1)).default([]),
   corsAllowCredentials: z.boolean().default(false),
   maxBodyBytes: z.number().int().positive().default(1024 * 1024),
   maxMultipartBytes: z.number().int().positive().default(10 * 1024 * 1024),
-  requireContentLength: z.boolean().default(true),
-  protectMetrics: z.boolean().default(true),
+  requireContentLength: z.boolean().default(false),
+  protectMetrics: z.boolean().default(false),
   hsts: z.object({
     enabled: z.boolean().default(false),
     maxAgeSeconds: z.number().int().positive().default(15552000),
@@ -261,6 +262,7 @@ export type RegionRoutingConfig = z.infer<typeof RoutingConfigSchema.shape.regio
 export type ControlPlanePostgresConfig = z.infer<typeof ControlPlanePostgresSchema>;
 export type ControlPlaneRedisConfig = z.infer<typeof ControlPlaneRedisSchema>;
 export type ControlPlaneConfig = z.infer<typeof ControlPlaneConfigSchema>;
+export type ControlPlaneFailureMode = z.infer<typeof ControlPlaneConfigSchema.shape.failureMode>;
 export type ObservabilityLoggingConfig = z.infer<typeof ObservabilityLoggingSchema>;
 export type ObservabilityTracingConfig = z.infer<typeof ObservabilityTracingSchema>;
 export type ObservabilityMetricsConfig = z.infer<typeof ObservabilityMetricsSchema>;

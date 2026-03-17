@@ -1,46 +1,10 @@
 const BASE_URL = '';
-const ADMIN_KEY_STORAGE_KEY = 'untangle_admin_key';
-
-function getAdminKey(): string | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    return window.localStorage.getItem(ADMIN_KEY_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function withAdminHeaders(init?: RequestInit): RequestInit {
-  const headers = new Headers(init?.headers ?? {});
-  const adminKey = getAdminKey();
-  if (adminKey) {
-    headers.set('x-untangle-admin-key', adminKey);
-  }
-  return {
-    ...init,
-    headers,
-  };
-}
 
 async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  return fetch(input, withAdminHeaders(init));
-}
-
-export function getStoredAdminKey(): string {
-  return getAdminKey() ?? '';
-}
-
-export function setStoredAdminKey(value: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    if (value) {
-      window.localStorage.setItem(ADMIN_KEY_STORAGE_KEY, value);
-    } else {
-      window.localStorage.removeItem(ADMIN_KEY_STORAGE_KEY);
-    }
-  } catch {
-    // ignore storage failures
-  }
+  return fetch(input, {
+    ...init,
+    credentials: init?.credentials ?? 'same-origin',
+  });
 }
 
 export interface Model {
@@ -145,7 +109,62 @@ export interface UsageRecord {
   success: boolean;
 }
 
+export interface DashboardShareProvider {
+  id: string;
+  name: string;
+  enabled: boolean;
+  hasKey: boolean;
+  activeModels: number;
+  totalModels: number;
+}
+
+export interface DashboardShareTopProvider {
+  id: string;
+  name: string;
+  requests: number;
+  totalCost: number;
+}
+
+export interface DashboardShareSnapshot {
+  generatedAt: string;
+  expiresAt: string;
+  summary: {
+    serverStatus: 'online';
+    totalProviders: number;
+    enabledProviders: number;
+    totalModels: number;
+    activeModels: number;
+    keysConfigured: number;
+    totalRequests: number;
+    successfulRequests: number;
+    totalTokens: number;
+    totalCost: number;
+  };
+  providers: DashboardShareProvider[];
+  topProviders: DashboardShareTopProvider[];
+}
+
 export const api = {
+  async createAdminSession(adminKey: string): Promise<{ authenticated: boolean; expiresAt: string }> {
+    const res = await apiFetch(`${BASE_URL}/api/admin/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminKey }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null) as { error?: { message?: string } } | null;
+      throw new Error(body?.error?.message || 'Failed to create admin session');
+    }
+    return res.json();
+  },
+
+  async deleteAdminSession(): Promise<void> {
+    const res = await apiFetch(`${BASE_URL}/api/admin/session`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error('Failed to end admin session');
+  },
+
   // Models
   async getModels(): Promise<Model[]> {
     const res = await apiFetch(`${BASE_URL}/v1/models`);
@@ -294,6 +313,24 @@ export const api = {
     const res = await apiFetch(`${BASE_URL}/api/settings`);
     if (!res.ok) throw new Error('Failed to fetch settings');
     return res.json();
+  },
+
+  async createDashboardShare(): Promise<{ token: string; expiresAt: string }> {
+    const res = await apiFetch(`${BASE_URL}/api/dashboard/share`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error('Failed to create share link');
+    return res.json();
+  },
+
+  async getDashboardShare(token: string): Promise<DashboardShareSnapshot> {
+    const res = await apiFetch(`${BASE_URL}/public/dashboard-share/${token}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null) as { error?: { message?: string } } | null;
+      throw new Error(body?.error?.message || 'Failed to load shared snapshot');
+    }
+    const data = await res.json() as { snapshot: DashboardShareSnapshot };
+    return data.snapshot;
   },
 
   // Pricing

@@ -1,8 +1,9 @@
-# untangle-ai
+# untangle-api
 
 ## Build
 - `pnpm build` — turbo-based monorepo build (core → server/ui → cli)
 - Always rebuild after changing core or server packages
+- For every long task create a todo list and work through it for tracking the implementations
 
 ## Architecture
 - Monorepo: `packages/core`, `packages/server`, `packages/ui` (React+Vite), `packages/cli`
@@ -15,8 +16,8 @@
 ## Providers
 - API key env var pattern: `${PROVIDER_ID.toUpperCase()}_API_KEY` (e.g., `OPENROUTER_API_KEY`)
 - Providers without API keys are disabled (`setProviderEnabled(id, false)`) and hidden from UI
-- OpenRouter model IDs use `provider/model` format (e.g., `anthropic/claude-sonnet-4`), aliases use `or-` prefix
-- Anthropic direct API IDs differ from OpenRouter (e.g., `claude-sonnet-4-20250514` vs `anthropic/claude-sonnet-4`)
+- OpenRouter model IDs use `provider/model` format (e.g., `anthropic/Codex-sonnet-4`), aliases use `or-` prefix
+- Anthropic direct API IDs differ from OpenRouter (e.g., `Codex-sonnet-4-20250514` vs `anthropic/Codex-sonnet-4`)
 - Anthropic has a `/v1/models` endpoint (requires `x-api-key` + `anthropic-version` headers)
 
 ## UI

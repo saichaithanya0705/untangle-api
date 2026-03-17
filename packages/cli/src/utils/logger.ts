@@ -16,11 +16,6 @@ export const logger = {
   error: (msg: string) => console.error(`${colors.red}x${colors.reset} ${msg}`),
   dim: (msg: string) => console.log(`${colors.dim}${msg}${colors.reset}`),
   banner: () => {
-    console.log(`
-${colors.cyan}+-----------------------------------+
-|       ${colors.bright}untangle-ai${colors.reset}${colors.cyan}                |
-|   Unified AI API Gateway          |
-+-----------------------------------+${colors.reset}
-`);
+    console.log(`\n${colors.cyan}+-----------------------------------+\n|       ${colors.bright}Untangle API${colors.reset}${colors.cyan}              |\n|   OpenAI-compatible AI gateway    |\n+-----------------------------------+${colors.reset}\n`);
   },
 };

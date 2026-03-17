@@ -6,6 +6,7 @@ import Models from './pages/Models';
 import Keys from './pages/Keys';
 import Usage from './pages/Usage';
 import Settings from './pages/Settings';
+import SharedDashboard from './pages/SharedDashboard';
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
         <Route path="usage" element={<Usage />} />
         <Route path="settings" element={<Settings />} />
       </Route>
+      <Route path="/shared/dashboard/:token" element={<SharedDashboard />} />
     </Routes>
   );
 }

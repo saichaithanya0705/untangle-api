@@ -18,7 +18,10 @@ export class ObservabilityMetrics {
   private requests = new Map<string, RequestMetric>();
   private providerRequests = new Map<string, ProviderRequestMetric>();
   private providerErrors = new Map<string, number>();
+  private growthEvents = new Map<string, number>();
   private fallbackCount = 0;
+  private controlPlaneDegradations = new Map<string, number>();
+  private usagePersistenceFailures = new Map<string, number>();
   private rateLimitHits = new Map<string, number>();
   private trafficShapingThrottles = new Map<string, number>();
   private trafficShapingCurrentRps = 0;
@@ -40,6 +43,18 @@ export class ObservabilityMetrics {
 
   recordFallback(): void {
     this.fallbackCount += 1;
+  }
+
+  recordControlPlaneDegradation(reason: string): void {
+    const key = reason.trim().length > 0 ? reason : 'unknown';
+    const current = this.controlPlaneDegradations.get(key) ?? 0;
+    this.controlPlaneDegradations.set(key, current + 1);
+  }
+
+  recordUsagePersistenceFailure(listenerName: string): void {
+    const key = listenerName.trim().length > 0 ? listenerName : 'unknown';
+    const current = this.usagePersistenceFailures.get(key) ?? 0;
+    this.usagePersistenceFailures.set(key, current + 1);
   }
 
   recordProviderRequest(
@@ -69,6 +84,12 @@ export class ObservabilityMetrics {
     const key = `${providerId}|${modelId}|${endpoint}|${normalizedReason}`;
     const current = this.providerErrors.get(key) ?? 0;
     this.providerErrors.set(key, current + 1);
+  }
+
+  recordGrowthEvent(event: string): void {
+    const key = event.trim().length > 0 ? event : 'unknown';
+    const current = this.growthEvents.get(key) ?? 0;
+    this.growthEvents.set(key, current + 1);
   }
 
   recordRateLimitHit(reason: string): void {
@@ -129,6 +150,18 @@ export class ObservabilityMetrics {
     lines.push('# TYPE untangle_router_fallback_total counter');
     lines.push(`untangle_router_fallback_total ${this.fallbackCount}`);
 
+    lines.push('# HELP untangle_control_plane_degradation_total Total control-plane degraded boot events.');
+    lines.push('# TYPE untangle_control_plane_degradation_total counter');
+    for (const [reason, count] of this.controlPlaneDegradations.entries()) {
+      lines.push(`untangle_control_plane_degradation_total{reason="${escapeLabel(reason)}"} ${count}`);
+    }
+
+    lines.push('# HELP untangle_usage_persistence_failures_total Total asynchronous usage persistence listener failures.');
+    lines.push('# TYPE untangle_usage_persistence_failures_total counter');
+    for (const [listenerName, count] of this.usagePersistenceFailures.entries()) {
+      lines.push(`untangle_usage_persistence_failures_total{listener="${escapeLabel(listenerName)}"} ${count}`);
+    }
+
     lines.push('# HELP untangle_provider_requests_total Total upstream provider requests.');
     lines.push('# TYPE untangle_provider_requests_total counter');
     for (const [key, value] of this.providerRequests.entries()) {
@@ -160,6 +193,12 @@ export class ObservabilityMetrics {
       lines.push(
         `untangle_provider_errors_total{provider="${escapeLabel(providerLabel)}",model="${escapeLabel(modelLabel)}",endpoint="${escapeLabel(endpoint)}",reason="${escapeLabel(reason)}"} ${count}`,
       );
+    }
+
+    lines.push('# HELP untangle_growth_events_total Total product growth events recorded by the admin UI.');
+    lines.push('# TYPE untangle_growth_events_total counter');
+    for (const [event, count] of this.growthEvents.entries()) {
+      lines.push(`untangle_growth_events_total{event="${escapeLabel(event)}"} ${count}`);
     }
 
     lines.push('# HELP untangle_rate_limit_hits_total Total virtual-key limit denials.');

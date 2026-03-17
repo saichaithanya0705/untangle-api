@@ -17,7 +17,7 @@ import {
   usageTracker,
   bootstrapControlPlane,
 } from '@untangle-ai/core';
-import { startServer } from '@untangle-ai/server';
+import { observabilityMetrics, startServer } from '@untangle-ai/server';
 import { logger } from '../utils/logger.js';
 import { resolveMasterPassword } from '../utils/master-password.js';
 import { resolveSecretReference } from '../utils/secrets.js';
@@ -52,6 +52,41 @@ function prettifyProviderName(providerId: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  return normalized === 'localhost'
+    || normalized === '127.0.0.1'
+    || normalized === '::1';
+}
+
+function warnIfExternallyExposed(config: Config): void {
+  if (isLoopbackHost(config.server.host)) {
+    return;
+  }
+
+  const exposedSurfaces: string[] = [];
+  if (!(config.security?.requireAdminAuthForApi ?? false)) {
+    exposedSurfaces.push('/api');
+  }
+  if (!(config.security?.requireDataPlaneAuth ?? true)) {
+    exposedSurfaces.push('/v1');
+  }
+  if (!(config.security?.protectMetrics ?? true)) {
+    exposedSurfaces.push('/metrics');
+  }
+
+  if (exposedSurfaces.length === 0) {
+    return;
+  }
+
+  logger.warn(
+    `Binding to ${config.server.host} exposes ${exposedSurfaces.join(', ')} without auth protection.`,
+  );
+  logger.warn(
+    'Use loopback for local development, or enable admin auth, metrics protection, and data-plane auth before exposing the gateway.',
+  );
 }
 
 function toCustomProviderDefinition(
@@ -141,7 +176,7 @@ function createRegistryFromConfig(config: Config): ProviderRegistry {
 }
 
 export const startCommand = new Command('start')
-  .description('Start the untangle-ai API gateway server')
+  .description('Start the Untangle API gateway server')
   .option('-p, --port <port>', 'Port to listen on')
   .option('-H, --host <host>', 'Host to bind to')
   .option('-c, --config <path>', 'Path to config file')
@@ -199,6 +234,8 @@ export const startCommand = new Command('start')
         config.controlPlane.enabled = true;
       }
 
+      warnIfExternallyExposed(config);
+
       const registry = createRegistryFromConfig(config);
       const controlPlaneBootstrap = await bootstrapControlPlane(config.controlPlane);
       for (const message of controlPlaneBootstrap.messages) {
@@ -211,10 +248,45 @@ export const startCommand = new Command('start')
           logger.dim(prefixed);
         }
       }
+
+      const controlPlaneDegradationReasons: string[] = [];
+      if (config.controlPlane.postgres.enabled && controlPlaneBootstrap.storeType !== 'postgres') {
+        controlPlaneDegradationReasons.push('postgres_fallback');
+      }
+      if (config.controlPlane.redis.enabled && controlPlaneBootstrap.limiterType !== 'redis') {
+        controlPlaneDegradationReasons.push('redis_fallback');
+      }
+      if (
+        controlPlaneDegradationReasons.length > 0
+        && config.controlPlane.failureMode === 'fail'
+      ) {
+        for (const reason of controlPlaneDegradationReasons) {
+          observabilityMetrics.recordControlPlaneDegradation(reason);
+        }
+        logger.error(
+          `Control-plane boot failed strict mode: ${controlPlaneDegradationReasons.join(', ')}.`,
+        );
+        logger.error(
+          'Either restore the configured Postgres/Redis backends or set controlPlane.failureMode=fallback.',
+        );
+        process.exit(1);
+      }
+      for (const reason of controlPlaneDegradationReasons) {
+        observabilityMetrics.recordControlPlaneDegradation(reason);
+        logger.warn(`Control-plane degraded boot detected: ${reason}.`);
+      }
       const controlPlane = controlPlaneBootstrap.service;
 
       if (controlPlane) {
         usageTracker.addListener((record) => controlPlane.recordUsageFromTracker(record));
+        usageTracker.addListenerErrorListener(({ listenerName, record, error }) => {
+          observabilityMetrics.recordUsagePersistenceFailure(listenerName);
+          logger.error(
+            `Usage persistence listener "${listenerName}" failed for record ${record.id}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        });
         logger.info('Control-plane foundation enabled.');
       }
 

@@ -3,13 +3,13 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { api, getStoredAdminKey, setStoredAdminKey, type ServerSettings } from '@/lib/api';
+import { api, type ServerSettings } from '@/lib/api';
 
 export default function Settings() {
   const [settings, setSettings] = useState<ServerSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [adminKey, setAdminKey] = useState(getStoredAdminKey());
+  const [adminKey, setAdminKey] = useState('');
   const [adminKeyStatus, setAdminKeyStatus] = useState<string | null>(null);
 
   useEffect(() => {
@@ -29,9 +29,16 @@ export default function Settings() {
     }
   }
 
-  async function handleSaveAdminKey() {
-    setStoredAdminKey(adminKey.trim());
-    setAdminKeyStatus(adminKey.trim() ? 'Admin key saved.' : 'Admin key cleared.');
+  async function handleStartAdminSession() {
+    await api.createAdminSession(adminKey.trim());
+    setAdminKey('');
+    setAdminKeyStatus('Admin session started.');
+    await loadSettings();
+  }
+
+  async function handleEndAdminSession() {
+    await api.deleteAdminSession();
+    setAdminKeyStatus('Admin session ended.');
     await loadSettings();
   }
 
@@ -59,18 +66,27 @@ export default function Settings() {
                 type="password"
                 value={adminKey}
                 onChange={(event) => setAdminKey(event.target.value)}
-                placeholder="Enter admin key to access /api endpoints"
+                placeholder="Enter admin key to start an admin session"
               />
               <div className="flex items-center gap-3">
-                <Button type="button" onClick={handleSaveAdminKey} variant="secondary" size="sm">
-                  Save Admin Key
+                <Button
+                  type="button"
+                  onClick={() => void handleStartAdminSession()}
+                  variant="secondary"
+                  size="sm"
+                  disabled={!adminKey.trim()}
+                >
+                  Start Admin Session
+                </Button>
+                <Button type="button" onClick={() => void handleEndAdminSession()} variant="outline" size="sm">
+                  End Session
                 </Button>
                 {adminKeyStatus && (
                   <span className="text-sm text-gray-500">{adminKeyStatus}</span>
                 )}
               </div>
               <p className="text-xs text-gray-500">
-                Stored locally in this browser session to authorize admin UI calls.
+                The raw admin key is used only once to start an HTTP-only admin session cookie.
               </p>
             </div>
           </div>

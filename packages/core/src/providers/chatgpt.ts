@@ -49,7 +49,9 @@ const CHATGPT_MODELS: ModelConfig[] = [
 
 type ReasoningEffort = 'low' | 'medium' | 'high';
 
-type ChatGPTRequest = OpenAIRequest & {
+type ChatGPTRequest = Omit<OpenAIRequest, 'messages' | 'max_tokens'> & {
+  input: OpenAIRequest['messages'];
+  max_output_tokens?: number;
   reasoning_effort?: ReasoningEffort;
 };
 
@@ -87,10 +89,10 @@ export class ChatGPTAdapter extends BaseProviderAdapter {
     return headers;
   }
 
-  transformRequest(request: OpenAIRequest): ChatGPTRequest & { input: OpenAIRequest['messages'] } {
+  transformRequest(request: OpenAIRequest): ChatGPTRequest {
     const { messages, max_tokens, ...rest } = request as OpenAIRequest & Record<string, unknown>;
-    const normalized: ChatGPTRequest & { input: OpenAIRequest['messages']; max_output_tokens?: number } = {
-      ...(rest as OpenAIRequest),
+    const normalized: ChatGPTRequest = {
+      ...(rest as Omit<OpenAIRequest, 'messages' | 'max_tokens'>),
       input: messages,
     };
     if (typeof max_tokens === 'number') {

@@ -1,7 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Activity, Server, Layers, Key, DollarSign, Zap, TrendingUp } from 'lucide-react';
+import {
+  Activity,
+  Server,
+  Layers,
+  Key,
+  DollarSign,
+  Zap,
+  TrendingUp,
+  Share2,
+  Loader2,
+  CheckCircle2,
+} from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { api, FullModel, Provider, ProviderKey } from '@/lib/api';
 
 interface Stats {
@@ -36,6 +48,10 @@ export default function Dashboard() {
   const [keys, setKeys] = useState<ProviderKey[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sharing, setSharing] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadData() {
@@ -142,6 +158,34 @@ export default function Dashboard() {
         { icon: DollarSign, label: 'Cost Today', value: formatCost(usage.totalCost), color: 'text-yellow-500' },
       ]
     : [];
+
+  const handleShareSnapshot = async () => {
+    setSharing(true);
+    setShareError(null);
+    setShareNotice(null);
+    setShareUrl(null);
+
+    try {
+      const { token, expiresAt } = await api.createDashboardShare();
+      const nextShareUrl = `${window.location.origin}/shared/dashboard/${token}`;
+      setShareUrl(nextShareUrl);
+
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(nextShareUrl);
+          setShareNotice(`Share link copied. Expires ${new Date(expiresAt).toLocaleString()}.`);
+        } catch {
+          setShareNotice(`Share link ready. Expires ${new Date(expiresAt).toLocaleString()}.`);
+        }
+      } else {
+        setShareNotice(`Share link ready. Expires ${new Date(expiresAt).toLocaleString()}.`);
+      }
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : 'Failed to create share link');
+    } finally {
+      setSharing(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -268,6 +312,52 @@ export default function Dashboard() {
                   </div>
                 </>
               )}
+              <hr className="my-2" />
+              <div className="space-y-3">
+                <div>
+                  <p className="font-medium">Share Gateway Snapshot</p>
+                  <p className="text-sm text-muted-foreground">
+                    Copy a redacted 72-hour link with provider coverage, request volume, and cost totals.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleShareSnapshot}
+                  disabled={sharing}
+                >
+                  {sharing ? (
+                    <>
+                      <Loader2 className="animate-spin" />
+                      Creating Link...
+                    </>
+                  ) : (
+                    <>
+                      <Share2 />
+                      Copy Share Link
+                    </>
+                  )}
+                </Button>
+                {shareNotice && (
+                  <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                    <div className="flex items-start gap-2">
+                      <CheckCircle2 className="mt-0.5 shrink-0" size={16} />
+                      <span>{shareNotice}</span>
+                    </div>
+                  </div>
+                )}
+                {shareError && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {shareError}
+                  </div>
+                )}
+                {shareUrl && (
+                  <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground break-all">
+                    {shareUrl}
+                  </div>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>

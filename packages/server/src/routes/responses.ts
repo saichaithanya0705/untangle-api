@@ -358,6 +358,9 @@ async function writeEvent(
 export function createResponsesRoutes(ctx: ResponsesContext) {
   const app = new Hono();
   const deploymentRouter = ctx.router;
+  const getContextValue = (context: Context, key: string): unknown => (
+    context.get as unknown as (name: string) => unknown
+  )(key);
 
   app.post('/v1/responses', async (c) => {
     const startTime = Date.now();
@@ -408,13 +411,13 @@ export function createResponsesRoutes(ctx: ResponsesContext) {
       if (virtualKeyGate.deniedResponse) {
         return virtualKeyGate.deniedResponse;
       }
-      const tenantId = virtualKeyGate.virtualKeyId ?? (c.get('tenantId') as string | undefined);
+      const tenantId = virtualKeyGate.virtualKeyId ?? (getContextValue(c, 'tenantId') as string | undefined);
       const usageMetadata = virtualKeyGate.virtualKeyId
         ? { virtualKeyId: virtualKeyGate.virtualKeyId }
         : undefined;
       const selectionContext = resolveDeploymentSelectionContext(c, ctx.routingConfig);
       const selection = deploymentRouter.selectDeployments(chatRequest.model, ctx.registry, selectionContext);
-      const exactCacheKey = (!body.stream && ctx.exactCache?.isEnabled('responses') && tenantId)
+      const exactCacheKey = (!body.stream && ctx.exactCache?.isEnabled('responses'))
         ? buildExactCacheKey('responses', normalizedBody, {
             tenantId,
             virtualKeyId: virtualKeyGate.virtualKeyId,

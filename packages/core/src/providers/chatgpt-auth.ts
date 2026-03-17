@@ -11,7 +11,7 @@ const CODEX_AUTH_TOKEN_ENV_KEYS = [
 
 const CODEX_AUTH_PATH_ENV = 'UNTANGLE_CODEX_AUTH_PATH';
 const CODEX_ORIGINATOR_ENV = 'UNTANGLE_CODEX_ORIGINATOR';
-const DEFAULT_CODEX_ORIGINATOR = 'untangle-ai';
+const DEFAULT_CODEX_ORIGINATOR = 'untangle-api';
 
 export interface ChatGPTAuthSession {
   token: string;

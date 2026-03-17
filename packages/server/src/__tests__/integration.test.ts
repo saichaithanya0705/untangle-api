@@ -74,6 +74,7 @@ describe('Integration Tests', () => {
       },
       controlPlane: {
         enabled: false,
+        failureMode: 'fallback',
         virtualKeyHeader: 'x-untangle-key',
         postgres: { enabled: false, schema: 'public' },
         redis: { enabled: false, keyPrefix: 'untangle' },
@@ -383,6 +384,7 @@ describe('Integration Tests', () => {
           },
           controlPlane: {
             enabled: false,
+            failureMode: 'fallback',
             virtualKeyHeader: 'x-untangle-key',
             postgres: { enabled: false, schema: 'public' },
             redis: { enabled: false, keyPrefix: 'untangle' },
@@ -433,6 +435,7 @@ describe('Integration Tests', () => {
           },
           controlPlane: {
             enabled: false,
+            failureMode: 'fallback',
             virtualKeyHeader: 'x-untangle-key',
             postgres: { enabled: false, schema: 'public' },
             redis: { enabled: false, keyPrefix: 'untangle' },

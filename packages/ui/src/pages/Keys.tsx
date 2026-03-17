@@ -329,7 +329,7 @@ $env:OPENAI_API_KEY="sk-your-key"
 $env:ANTHROPIC_API_KEY="sk-ant-your-key"
 
 # Then start the server
-untangle-ai start`}
+untangle-api start`}
           </pre>
         </div>
       </div>

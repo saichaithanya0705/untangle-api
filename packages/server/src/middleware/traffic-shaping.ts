@@ -31,10 +31,11 @@ export function trafficShapingMiddleware(config?: TrafficShapingConfig): Middlew
     };
   }
 
-  const adaptive = config.adaptive;
+  const resolvedConfig = config;
+  const adaptive = resolvedConfig.adaptive;
   const adaptiveEnabled = adaptive.enabled;
-  const minRps = adaptiveEnabled ? Math.max(0.1, adaptive.minRps) : config.requestsPerSecond;
-  const maxRps = adaptiveEnabled ? Math.max(minRps, adaptive.maxRps) : config.requestsPerSecond;
+  const minRps = adaptiveEnabled ? Math.max(0.1, adaptive.minRps) : resolvedConfig.requestsPerSecond;
+  const maxRps = adaptiveEnabled ? Math.max(minRps, adaptive.maxRps) : resolvedConfig.requestsPerSecond;
 
   const buckets = new Map<string, TenantBucket>();
   const maxBuckets = 10000;
@@ -54,11 +55,11 @@ export function trafficShapingMiddleware(config?: TrafficShapingConfig): Middlew
     if (!entry) {
       entry = {
         bucket: {
-          tokens: Math.max(1, config.burst),
+          tokens: Math.max(1, resolvedConfig.burst),
           lastRefillAt: Date.now(),
         },
         adaptive: {
-          currentRps: clamp(config.requestsPerSecond, minRps, maxRps),
+          currentRps: clamp(resolvedConfig.requestsPerSecond, minRps, maxRps),
           lastAdjustedAt: Date.now(),
           emaLatencyMs: 0,
           emaErrorRate: 0,
@@ -89,7 +90,7 @@ export function trafficShapingMiddleware(config?: TrafficShapingConfig): Middlew
     const now = Date.now();
     const elapsedMs = Math.max(0, now - bucket.lastRefillAt);
     const refillTokens = (elapsedMs / 1000) * adaptiveState.currentRps;
-    bucket.tokens = Math.min(config.burst, bucket.tokens + refillTokens);
+    bucket.tokens = Math.min(resolvedConfig.burst, bucket.tokens + refillTokens);
     bucket.lastRefillAt = now;
 
     if (bucket.tokens < 1) {

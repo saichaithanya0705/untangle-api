@@ -41,7 +41,7 @@ export default function Layout() {
   return (
     <div className="min-h-screen bg-gray-100">
       <header className="md:hidden sticky top-0 z-40 flex items-center justify-between bg-gray-900 px-4 py-3 text-white">
-        <div className="text-lg font-bold">untangle-ai</div>
+        <div className="text-lg font-bold">Untangle API</div>
         <button
           type="button"
           aria-label="Toggle navigation"
@@ -63,7 +63,7 @@ export default function Layout() {
 
       <div className="md:flex">
         <aside className="hidden w-64 shrink-0 bg-gray-900 p-4 text-white md:block">
-          <div className="text-xl font-bold mb-8 px-2">untangle-ai</div>
+          <div className="text-xl font-bold mb-8 px-2">Untangle API</div>
           {renderNav()}
         </aside>
 
@@ -72,7 +72,7 @@ export default function Layout() {
             mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
           }`}
         >
-          <div className="text-xl font-bold mb-8 px-2">untangle-ai</div>
+          <div className="text-xl font-bold mb-8 px-2">Untangle API</div>
           {renderNav(true)}
         </aside>
 

@@ -22,6 +22,8 @@ import { createKeysRoutes } from './routes/keys.js';
 import { createUsageRoutes } from './routes/usage.js';
 import { createDiscoveryRoutes } from './routes/discovery.js';
 import { createAdminOpsRoutes } from './routes/admin-ops.js';
+import { createAdminSessionRoutes } from './routes/admin-session.js';
+import { createDashboardShareRoutes } from './routes/dashboard-share.js';
 import { loggingMiddleware } from './middleware/logging.js';
 import { adminAuthMiddleware } from './middleware/admin-auth.js';
 import { trafficShapingMiddleware } from './middleware/traffic-shaping.js';
@@ -182,7 +184,9 @@ export function createApp(options: ServerOptions) {
     getApiKey: async (id) => getApiKey(id),
     apiCompatibility,
   }));
+  app.route('/', createAdminSessionRoutes({ security: securityConfig }));
   app.route('/', createAdminOpsRoutes({ registry, router }));
+  app.route('/', createDashboardShareRoutes({ registry, getApiKey, controlPlane }));
 
   // UI serving
   if (enableUi) {
@@ -237,7 +241,7 @@ export function startServer(options: ServerOptions) {
   const app = createApp(options);
   const { port = 3000, host = 'localhost' } = options.config.server;
 
-  console.log(`Starting untangle-ai server on http://${host}:${port}`);
+  console.log(`Starting Untangle API on http://${host}:${port}`);
 
   serve({
     fetch: app.fetch,
@@ -249,6 +253,7 @@ export function startServer(options: ServerOptions) {
 }
 
 export { createChatRoutes } from './routes/chat.js';
+export { observabilityMetrics } from './observability/metrics.js';
 export { createEmbeddingsRoutes } from './routes/embeddings.js';
 export { createModelsRoutes } from './routes/models.js';
 export { createResponsesRoutes } from './routes/responses.js';
@@ -259,6 +264,6 @@ export { createKeysRoutes } from './routes/keys.js';
 export { createUsageRoutes } from './routes/usage.js';
 export { createDiscoveryRoutes } from './routes/discovery.js';
 export { createAdminOpsRoutes } from './routes/admin-ops.js';
+export { createDashboardShareRoutes } from './routes/dashboard-share.js';
 export { loggingMiddleware } from './middleware/logging.js';
 export { adminAuthMiddleware } from './middleware/admin-auth.js';
-export { observabilityMetrics } from './observability/metrics.js';

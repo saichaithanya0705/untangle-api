@@ -6,3 +6,28 @@ dist/
 .env.local
 secrets/
 *.key
+
+# Local runtime config and generated release outputs
+untangle-api.yaml
+untangle-api.yml
+untangle.yaml
+untangle.yml
+artifacts/
+packages/cli/ui-dist/
+packages/cli/*.tgz
+packages/server/.tmp/
+req-*.json
+tmp-*.txt
+tmp-*.csv
+ui-mobile-*.png
+hello
+ARCHITECTURE_REMEDIATION_TODO.md
+billing.csv
+iac-export.json
+iac-spec.json
+test-audio.txt
+
+# Local editor and agent state
+.claude/
+.codex/
+.serena/

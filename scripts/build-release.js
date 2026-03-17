@@ -1,39 +1,36 @@
 #!/usr/bin/env node
-import { execSync } from 'child_process';
-import { cpSync, mkdirSync, existsSync, rmSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { execSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
+const cliPackage = JSON.parse(
+  readFileSync(join(root, 'packages/cli/package.json'), 'utf-8'),
+);
 
-console.log('Building untangle-ai for release...\n');
+function run(step, command) {
+  console.log(`\n[release] ${step}`);
+  execSync(command, { cwd: root, stdio: 'inherit' });
+}
 
-// Build all packages
-console.log('1. Building all packages...');
-execSync('pnpm run build', { stdio: 'inherit', cwd: root });
+console.log('Preparing Untangle API release assets...');
+run('Build workspace', 'pnpm run build');
 
-// Copy UI dist to CLI package
-console.log('\n2. Copying UI assets to CLI package...');
 const uiDist = join(root, 'packages/ui/dist');
 const cliUiDist = join(root, 'packages/cli/ui-dist');
+if (!existsSync(uiDist)) {
+  throw new Error('UI build output was not produced at packages/ui/dist.');
+}
 
 if (existsSync(cliUiDist)) {
-  rmSync(cliUiDist, { recursive: true });
+  rmSync(cliUiDist, { recursive: true, force: true });
 }
 
-if (existsSync(uiDist)) {
-  mkdirSync(cliUiDist, { recursive: true });
-  cpSync(uiDist, cliUiDist, { recursive: true });
-  console.log('   UI assets copied to packages/cli/ui-dist');
-} else {
-  console.log('   Warning: UI dist not found, skipping');
-}
+mkdirSync(cliUiDist, { recursive: true });
+cpSync(uiDist, cliUiDist, { recursive: true });
 
-console.log('\n✓ Build complete!');
-console.log('\nTo publish to npm (CLI only):');
-console.log('  cd packages/cli && npm publish');
-console.log('  (prepublishOnly runs `pnpm -w run release` to bundle UI assets)');
-console.log('\nOr test locally:');
-console.log('  cd packages/cli && npm pack');
-console.log('  npm install -g untangle-ai-0.1.0.tgz');
+console.log('[release] Bundled UI assets into packages/cli/ui-dist');
+console.log(`\nRelease assets are ready for ${cliPackage.name}@${cliPackage.version}.`);
+console.log('Create a validated tarball with `pnpm run pack:cli`.');

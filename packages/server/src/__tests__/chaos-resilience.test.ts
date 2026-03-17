@@ -3,6 +3,7 @@ import { createApp, type ServerOptions } from '../index.js';
 import {
   bootstrapControlPlane,
   ProviderRegistry,
+  SecurityConfigSchema,
   type Config,
   type ProviderAdapter,
 } from '@untangle-ai/core';
@@ -99,10 +100,16 @@ function createBaseConfig(): Config {
     },
     controlPlane: {
       enabled: false,
+      failureMode: 'fallback',
       virtualKeyHeader: 'x-untangle-key',
       postgres: { enabled: false, schema: 'public' },
       redis: { enabled: false, keyPrefix: 'untangle' },
     },
+    security: SecurityConfigSchema.parse({
+      requireDataPlaneAuth: false,
+      requireContentLength: false,
+      protectMetrics: false,
+    }),
   };
 }
 
@@ -118,6 +125,7 @@ function createRoutingApp(options?: {
     ['primary', 'primary-key'],
     ['secondary', 'secondary-key'],
   ]);
+  const virtualKeyHeader = options?.virtualKeyHeader ?? 'x-untangle-key';
 
   return createApp({
     registry,
@@ -126,8 +134,13 @@ function createRoutingApp(options?: {
       controlPlane: {
         ...createBaseConfig().controlPlane,
         enabled: !!options?.controlPlane,
-        virtualKeyHeader: options?.virtualKeyHeader ?? 'x-untangle-key',
+        failureMode: 'fallback',
+        virtualKeyHeader,
       },
+      security: SecurityConfigSchema.parse({
+        ...createBaseConfig().security,
+        dataPlaneHeader: virtualKeyHeader,
+      }),
     },
     controlPlane: options?.controlPlane,
     getApiKey: (providerId) => runtimeKeys.get(providerId),

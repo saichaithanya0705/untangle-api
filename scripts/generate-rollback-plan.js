@@ -26,7 +26,7 @@ function runGit(command) {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
-const outputArg = getArg('--output', 'observability/release/rollback-plan.json');
+const outputArg = getArg('--output', 'artifacts/release/rollback-plan.json');
 const outputPath = resolve(root, outputArg);
 
 const commit = runGit('git rev-parse HEAD');
@@ -49,7 +49,7 @@ const plan = {
     '# Revert specific rollout commits (newest first):',
     '# git revert <commit_sha>',
     'pnpm run build',
-    'pnpm --filter untangle-ai start -- --host 127.0.0.1 --port 4010',
+    'pnpm --filter untangle-api start -- --host 127.0.0.1 --port 4010',
   ],
 };
 

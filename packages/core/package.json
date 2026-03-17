@@ -2,7 +2,7 @@
   "name": "@untangle-ai/core",
   "version": "0.1.0",
   "private": true,
-  "description": "Core types and provider adapters for untangle-ai",
+  "description": "Internal workspace package for Untangle API core logic",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -29,8 +29,15 @@
     "@types/node": "^22.0.0",
     "rimraf": "^6.0.0"
   },
-  "publishConfig": {
-    "access": "public"
+  "license": "MIT",
+  "author": "Sai Chaithanya Reddy Yudururi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/saichaithanya0705/untangle-api.git",
+    "directory": "packages/core"
   },
-  "license": "MIT"
+  "homepage": "https://github.com/saichaithanya0705/untangle-api/tree/main/packages/core",
+  "bugs": {
+    "url": "https://github.com/saichaithanya0705/untangle-api/issues"
+  }
 }
